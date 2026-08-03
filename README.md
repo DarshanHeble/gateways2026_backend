@@ -43,6 +43,10 @@ When the backend server is running, interactive Swagger UI documentation is serv
 | **Production Dev Test** | `npm run dev:prod` | `.env.production` (`NODE_ENV=production`) |
 | **Start DB Only** | `npm run db:up` | Starts local MySQL Docker container |
 | **Stop DB Only** | `npm run db:down` | Stops local MySQL Docker container |
+| **Generate Migrations** | `npm run db:generate` | Generates SQL migration files from Drizzle schemas |
+| **Push Schema (Local)** | `npm run db:push` | Pushes schema changes to local MySQL database |
+| **Push Schema (Preprod)**| `npm run db:push:preprod` | Pushes schema changes to preproduction database |
+| **Push Schema (Prod)** | `npm run db:push:prod` | Pushes schema changes to production database |
 | **Start Build (Preprod)** | `npm run start:preprod` | `.env.preproduction` |
 | **Start Build (Prod)** | `npm run start:prod` | `.env.production` |
 
