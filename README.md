@@ -20,6 +20,15 @@ This project supports separate database configurations for **Development**, **Pr
 
 ---
 
+## 📖 Interactive API Documentation (Swagger UI)
+
+When the server is running, interactive Swagger UI documentation is available at:
+👉 **[http://localhost:4000/docs](http://localhost:4000/docs)**
+
+You can test all API endpoints, inspect request/response Zod schemas, and send test requests directly from your browser.
+
+---
+
 ## 🚀 Running the Project
 
 | Command | Script | Target Environment / DB |
