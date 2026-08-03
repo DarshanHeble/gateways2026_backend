@@ -22,9 +22,9 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   APP_BASE_URL: z.string().url().default('http://localhost:4000'),
 
-  // Dual DB URLs
+  // Dual DB URLs (WRITER_DATABASE_URL falls back to DATABASE_URL if omitted)
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  WRITER_DATABASE_URL: z.string().min(1, 'WRITER_DATABASE_URL is required'),
+  WRITER_DATABASE_URL: z.string().optional(),
 
   // Security secrets
   AUTH_SECRET: z.string().min(32, 'AUTH_SECRET must be at least 32 characters long'),
