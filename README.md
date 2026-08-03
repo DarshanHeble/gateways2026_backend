@@ -22,10 +22,14 @@ This project supports separate database configurations for **Development**, **Pr
 
 ## 📖 Interactive API Documentation (Swagger UI)
 
-When the server is running, interactive Swagger UI documentation is available at:
+When the backend server is running, interactive Swagger UI documentation is served automatically at:
 👉 **[http://localhost:4000/docs](http://localhost:4000/docs)**
 
-You can test all API endpoints, inspect request/response Zod schemas, and send test requests directly from your browser.
+### Key Features:
+- **Interactive Testing**: Test all REST API endpoints directly from your web browser without external tools like Postman.
+- **Zod Schema Validation**: Request parameters, bodies, and response types are automatically typed and validated via `fastify-type-provider-zod`.
+- **Authorization Support**: Pre-configured support for JWT Bearer Tokens and Session Cookies for testing protected routes.
+- **100% Offline & Local**: Runs entirely within the local Fastify process using open OpenAPI standard—no internet access or API keys required.
 
 ---
 
