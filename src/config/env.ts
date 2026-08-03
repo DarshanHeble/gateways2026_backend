@@ -22,8 +22,15 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   APP_BASE_URL: z.string().url().default('http://localhost:4000'),
 
-  // Dual DB URLs (WRITER_DATABASE_URL falls back to DATABASE_URL if omitted)
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  // Individual DB connection variables
+  DB_HOST: z.string().optional(),
+  DB_PORT: z.coerce.number().default(3306),
+  DB_USER: z.string().optional(),
+  DB_PASSWORD: z.string().optional(),
+  DB_NAME: z.string().optional(),
+
+  // Dual DB URLs (Optional if individual DB_* variables are provided)
+  DATABASE_URL: z.string().optional(),
   WRITER_DATABASE_URL: z.string().optional(),
 
   // Security secrets
@@ -49,11 +56,25 @@ export function loadConfig(): AppConfig {
     return cachedConfig;
   }
 
+  // Pre-process process.env to auto-construct DATABASE_URL if missing
+  if (!process.env.DATABASE_URL && process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME) {
+    const host = process.env.DB_HOST;
+    const port = process.env.DB_PORT || '3306';
+    const user = process.env.DB_USER;
+    const pass = encodeURIComponent(process.env.DB_PASSWORD || '');
+    const dbName = process.env.DB_NAME;
+    process.env.DATABASE_URL = `mysql://${user}:${pass}@${host}:${port}/${dbName}`;
+  }
+
   const result = envSchema.safeParse(process.env);
 
-  if (!result.success) {
+  if (!result.success || (!result.data.DATABASE_URL && !result.data.DB_HOST)) {
     console.error('❌ Invalid Environment Variables Configuration:');
-    console.error(JSON.stringify(result.error.format(), null, 2));
+    if (!result.success) {
+      console.error(JSON.stringify(result.error.format(), null, 2));
+    } else {
+      console.error('Either DATABASE_URL or (DB_HOST, DB_USER, DB_NAME) must be provided.');
+    }
     throw new Error('Process initialization failed due to invalid environment variables.');
   }
 
