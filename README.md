@@ -24,9 +24,12 @@ This project supports separate database configurations for **Development**, **Pr
 
 | Command | Script | Target Environment / DB |
 | :--- | :--- | :--- |
-| **Local Dev (Default)** | `npm run dev` | `.env` (`NODE_ENV=development`) |
+| **Local Dev + DB (Single Command)** | `npm run dev:all` | Auto-starts local MySQL Docker DB, runs backend, stops DB on `Ctrl+C` |
+| **Local Dev (App only)** | `npm run dev` | `.env` (`NODE_ENV=development`) |
 | **Preproduction Dev** | `npm run dev:preprod` | `.env.preproduction` (`NODE_ENV=preproduction`) |
 | **Production Dev Test** | `npm run dev:prod` | `.env.production` (`NODE_ENV=production`) |
+| **Start DB Only** | `npm run db:up` | Starts local MySQL Docker container |
+| **Stop DB Only** | `npm run db:down` | Stops local MySQL Docker container |
 | **Start Build (Preprod)** | `npm run start:preprod` | `.env.preproduction` |
 | **Start Build (Prod)** | `npm run start:prod` | `.env.production` |
 

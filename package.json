@@ -5,8 +5,11 @@
   "main": "dist/app.js",
   "scripts": {
     "dev": "tsx watch src/app.ts",
+    "dev:all": "tsx scripts/dev-with-db.ts",
     "dev:preprod": "NODE_ENV=preproduction tsx watch src/app.ts",
     "dev:prod": "NODE_ENV=production tsx watch src/app.ts",
+    "db:up": "docker compose up -d mysql",
+    "db:down": "docker compose stop mysql",
     "build": "tsc",
     "start": "node dist/app.js",
     "start:preprod": "NODE_ENV=preproduction node dist/app.js",
