@@ -42,6 +42,22 @@ const envSchema = z.object({
 
   // Storage / Mail optional
   SMTP_URL: z.string().optional(),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_SECURE: z.coerce.boolean().optional(),
+  SMTP_FROM: z.string().optional(),
+
+  // Fallback SMTP config
+  SMTP_FALLBACK_URL: z.string().optional(),
+  SMTP_FALLBACK_HOST: z.string().optional(),
+  SMTP_FALLBACK_PORT: z.coerce.number().optional(),
+  SMTP_FALLBACK_USER: z.string().optional(),
+  SMTP_FALLBACK_PASS: z.string().optional(),
+  SMTP_FALLBACK_SECURE: z.coerce.boolean().optional(),
+  SMTP_FALLBACK_FROM: z.string().optional(),
+
   STORAGE_BUCKET_URL: z.string().optional(),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
