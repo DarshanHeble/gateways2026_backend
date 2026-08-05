@@ -61,6 +61,17 @@ const envSchema = z.object({
   STORAGE_BUCKET_URL: z.string().optional(),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
+
+  // Session
+  SESSION_MAX_AGE_DAYS: z.coerce.number().default(7),
+
+  // OTP
+  OTP_EXPIRY_MINUTES: z.coerce.number().default(15),
+
+  // Google OAuth (optional — required only if using OAuth sign-in)
+  OAUTH_GOOGLE_CLIENT_ID: z.string().optional(),
+  OAUTH_GOOGLE_CLIENT_SECRET: z.string().optional(),
+  OAUTH_CALLBACK_BASE_URL: z.string().url().optional(),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { loadConfig } from './config/env.js';
 import { registerPlugins } from './plugins/security.js';
 import { registerSwagger } from './plugins/swagger.js';
+import { registerSessionHook } from './plugins/jwt-auth.js';
+import { registerAuthRoutes } from './routes/auth.routes.js';
 
 export async function buildApp() {
   const config = loadConfig();
@@ -17,8 +19,19 @@ export async function buildApp() {
   // Register Swagger UI documentation FIRST
   await registerSwagger(app, config);
 
-  // Register security plugins
+  // Register security plugins (CORS, Helmet, rate-limit, cookies, CSRF, error handler)
   await registerPlugins(app, config);
+
+  // Register global session validation hook (must be after cookie plugin)
+  await registerSessionHook(app);
+
+  // Register auth routes under /auth prefix
+  await app.register(
+    async (authApp) => {
+      await registerAuthRoutes(authApp, config);
+    },
+    { prefix: '/auth' },
+  );
 
   // Health check endpoint
   app.get('/health', {

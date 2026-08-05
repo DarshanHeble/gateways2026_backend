@@ -12,6 +12,7 @@
     "db:push": "drizzle-kit push",
     "db:push:preprod": "NODE_ENV=preproduction drizzle-kit push",
     "db:push:prod": "NODE_ENV=production drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
     "db:up": "docker compose up -d mysql",
     "db:down": "docker compose stop mysql",
     "build": "tsc",
@@ -39,9 +40,7 @@
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
-    "@types/bcrypt": "^6.0.0",
-    "argon2": "^0.45.1",
-    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.0",
@@ -53,6 +52,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^26.1.2",
     "@types/nodemailer": "^8.0.1",
     "drizzle-kit": "^0.31.10",

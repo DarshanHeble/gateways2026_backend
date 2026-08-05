@@ -17,12 +17,6 @@ export async function registerSwagger(app: FastifyInstance, config: AppConfig) {
         description: 'REST API backend for Gateways 2026 fest web portal and companion mobile app.',
         version: '1.0.0',
       },
-      servers: [
-        {
-          url: `http://localhost:${config.PORT}`,
-          description: 'Local environment',
-        },
-      ],
       components: {
         securitySchemes: {
           bearerAuth: {
@@ -50,6 +44,14 @@ export async function registerSwagger(app: FastifyInstance, config: AppConfig) {
       docExpansion: 'list',
       deepLinking: true,
       displayRequestDuration: true,
+      requestInterceptor: function (request: any) {
+        // Automatically attach CSRF token from cookie to header for Swagger requests
+        const match = document.cookie.match(/(^|;)\s*csrf_token\s*=\s*([^;]+)/);
+        if (match) {
+          request.headers['x-csrf-token'] = match[2];
+        }
+        return request;
+      },
     },
     staticCSP: true,
     transformStaticCSP: (header) => header,
