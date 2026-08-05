@@ -6,7 +6,5 @@ export default defineConfig({
     testTimeout: 15000,
     hookTimeout: 15000,
     include: ['src/**/*.test.ts'],
-    run: true,
-    passWithNoTests: true,
   },
 });
