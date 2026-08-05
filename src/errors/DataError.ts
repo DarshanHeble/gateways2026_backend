@@ -83,7 +83,7 @@ export function createDataError(
     INVALID_JOIN_CODE: 'Invalid or expired team join code.',
     STORAGE_UNAVAILABLE: 'Storage service is temporarily unavailable. Please try again.',
     VALIDATION_FAILED: 'Validation failed for request parameters.',
-    RECEIPT_ALREADY_SUBMITTED: 'A receipt has already been submitted for this registration.',
+    RECEIPT_ALREADY_SUBMITTED: 'A payment receipt has already been submitted for your account.',
     PAYMENT_NOT_VERIFIED: 'Action requires a verified payment.',
     FORBIDDEN: 'You do not have permission to perform this action.',
     INTERNAL_ERROR: 'An internal server error occurred. Please try again later.',
