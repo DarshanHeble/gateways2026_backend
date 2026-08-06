@@ -16,6 +16,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { assertAuthenticated } from '../plugins/jwt-auth.js';
 import { assertAdmin } from '../security/roles.js';
+import { cloudinaryStorage } from '../storage/cloudinary.storage.js';
 import {
   getOwnReceipt,
   listPendingReceipts,
@@ -47,7 +48,7 @@ function serializeReceipt(receipt: PaymentReceipt) {
   return {
     id: receipt.id,
     userId: receipt.userId,
-    fileUrl: receipt.fileUrl,
+    fileUrl: cloudinaryStorage.createSignedDownloadUrl(receipt.cloudinaryPublicId),
     fileName: receipt.fileName,
     fileSizeBytes: receipt.fileSizeBytes,
     status: receipt.status as 'pending' | 'verified' | 'rejected',
@@ -70,6 +71,7 @@ export async function registerPaymentReceiptRoutes(app: FastifyInstance) {
   router.post(
     '/',
     {
+      bodyLimit: 8_000_000,
       schema: {
         tags: ['Payments'],
         summary: 'Submit the one-time entry-pass payment receipt',
