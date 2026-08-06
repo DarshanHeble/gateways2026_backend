@@ -6,7 +6,7 @@
  * user_achievements/characters remain unimplemented.
  */
 
-import { int, mysqlTable, timestamp, uniqueIndex, varchar } from 'drizzle-orm/mysql-core';
+import { index, int, mysqlTable, timestamp, uniqueIndex, varchar } from 'drizzle-orm/mysql-core';
 import { sql } from 'drizzle-orm';
 import { users } from './auth.js';
 
@@ -33,6 +33,7 @@ export const xpLedger = mysqlTable(
       table.sourceId,
       table.userId,
     ),
+    userLedgerIdx: index('user_ledger_idx').on(table.userId, table.createdAt),
   }),
 );
 
