@@ -13,7 +13,10 @@
  */
 
 import type { FastifyRequest } from 'fastify';
+import { and, eq } from 'drizzle-orm';
 import { createDataError } from '../errors/DataError.js';
+import { getAppDb } from '../db/index.js';
+import { userRoles } from '../db/schema/identity.js';
 
 // ─── Role Enum ────────────────────────────────────────────────────────────────
 
@@ -46,19 +49,22 @@ export function assertAuthenticated(request: FastifyRequest): asserts request is
 
 /**
  * Throws FORBIDDEN (403) if the authenticated user does not hold the ADMIN role.
- *
- * ⏳ Phase 4 — Full DB-backed implementation requires identity schema (user_roles table).
- * Currently stubs to a safe denial to avoid accidental privilege escalation.
- * Replace the TODO body once identity.ts schema + user_roles repository are implemented.
+ * Throws NOT_AUTHENTICATED (401) if there's no session at all.
+ * Always re-derives from the database — never trusts a cached/client claim.
  */
 export async function assertAdmin(request: FastifyRequest): Promise<void> {
   assertAuthenticated(request);
-  // TODO(Phase 4): query user_roles WHERE user_id = request.user.id AND role = 'ADMIN'
-  // Until then, deny all admin access to prevent accidental privilege escalation.
-  throw createDataError(
-    'FORBIDDEN',
-    'Admin role enforcement requires the identity schema (Phase 4). Not yet available.',
-  );
+
+  const db = getAppDb();
+  const rows = await db
+    .select({ id: userRoles.id })
+    .from(userRoles)
+    .where(and(eq(userRoles.userId, request.user.id), eq(userRoles.role, UserRole.ADMIN)))
+    .limit(1);
+
+  if (!rows[0]) {
+    throw createDataError('FORBIDDEN', 'Admin role required for this action.');
+  }
 }
 
 // ─── assertOrganizer ──────────────────────────────────────────────────────────
