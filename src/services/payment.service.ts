@@ -57,31 +57,59 @@ export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Prom
     publicId: receiptId,
   });
 
+  // Old Cloudinary object to clean up (only relevant on resubmission after a
+  // rejection). Captured before the transaction since deleteFile is a network
+  // call and shouldn't run inside a DB transaction.
+  const oldPublicIdToClean = existing?.status === 'rejected' ? existing.cloudinaryPublicId : null;
+
   const writerDb = getWriterDb();
-  return withDeadlockRetry(() =>
-    withTransaction(writerDb, async (tx) => {
-      // A previously rejected receipt is replaced on resubmission — the
-      // UNIQUE(user_id) constraint means the old row must go first.
-      if (existing && existing.status === 'rejected') {
-        await deleteReceiptById(tx, existing.id);
-      }
+  let created: PaymentReceipt;
+  try {
+    created = await withDeadlockRetry(() =>
+      withTransaction(writerDb, async (tx) => {
+        // A previously rejected receipt is replaced on resubmission — the
+        // UNIQUE(user_id) constraint means the old row must go first.
+        if (existing && existing.status === 'rejected') {
+          await deleteReceiptById(tx, existing.id);
+        }
 
-      await createReceipt(tx, {
-        id: receiptId,
-        userId,
-        cloudinaryPublicId: upload.publicId,
-        fileUrl: upload.url,
-        fileName: dto.fileName,
-        fileSizeBytes: decodedBytes,
-      });
+        await createReceipt(tx, {
+          id: receiptId,
+          userId,
+          cloudinaryPublicId: upload.publicId,
+          fileUrl: upload.url,
+          fileName: dto.fileName,
+          fileSizeBytes: decodedBytes,
+        });
 
-      const created = await getReceiptByUser(tx, userId);
-      if (!created) {
-        throw createDataError('INTERNAL_ERROR', 'Receipt row failed to persist.');
-      }
-      return created;
-    }),
-  );
+        const inserted = await getReceiptByUser(tx, userId);
+        if (!inserted) {
+          throw createDataError('INTERNAL_ERROR', 'Receipt row failed to persist.');
+        }
+        return inserted;
+      }),
+    );
+  } catch (err) {
+    // The transaction failed — the just-uploaded file is now orphaned in
+    // Cloudinary with no DB row referencing it. Best-effort cleanup; never
+    // let a delete failure mask the original error.
+    try {
+      await cloudinaryStorage.deleteFile(upload.publicId);
+    } catch {
+      // swallow — nothing more we can do here.
+    }
+    throw err;
+  }
+
+  if (oldPublicIdToClean) {
+    try {
+      await cloudinaryStorage.deleteFile(oldPublicIdToClean);
+    } catch {
+      // best-effort — old object may leak but the resubmission itself succeeded.
+    }
+  }
+
+  return created;
 }
 
 export async function getOwnReceipt(userId: string): Promise<PaymentReceipt | null> {

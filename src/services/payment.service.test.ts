@@ -10,10 +10,15 @@ vi.mock('../storage/cloudinary.storage.js', () => ({
       bytes: 4,
     })),
     deleteFile: vi.fn(async () => {}),
+    createSignedDownloadUrl: vi.fn(() => 'https://res.cloudinary.com/test/mock-signed-url'),
   },
 }));
 
-const { submitReceipt } = await import('./payment.service.js');
+const {
+  submitReceipt,
+  reviewReceipt,
+  listPendingReceipts: listPendingReceiptsService,
+} = await import('./payment.service.js');
 
 const db = getAppDb();
 let cleanupUserId: string | null = null;
@@ -105,10 +110,13 @@ describe('submitReceipt', () => {
 
     expect(second.status).toBe('pending');
     expect(second.fileName).toBe('receipt-retry.pdf');
+
+    // The old (rejected) receipt's Cloudinary object must be cleaned up after
+    // the resubmission transaction commits — publicId equals the old receipt id.
+    const { cloudinaryStorage } = await import('../storage/cloudinary.storage.js');
+    expect(cloudinaryStorage.deleteFile).toHaveBeenCalledWith(first.id);
   });
 });
-
-const { reviewReceipt, listPendingReceipts: listPendingReceiptsService } = await import('./payment.service.js');
 
 describe('reviewReceipt', () => {
   it('verifies a pending receipt and awards +10 XP exactly once', async () => {
