@@ -5,6 +5,7 @@ import { registerPlugins } from './plugins/security.js';
 import { registerSwagger } from './plugins/swagger.js';
 import { registerSessionHook } from './plugins/jwt-auth.js';
 import { registerAuthRoutes } from './routes/auth.routes.js';
+import { registerPaymentReceiptRoutes } from './routes/payment-receipts.routes.js';
 
 export async function buildApp() {
   const config = loadConfig();
@@ -31,6 +32,14 @@ export async function buildApp() {
       await registerAuthRoutes(authApp, config);
     },
     { prefix: '/auth' },
+  );
+
+  // Register payment-receipt routes under /payment-receipts prefix
+  await app.register(
+    async (paymentsApp) => {
+      await registerPaymentReceiptRoutes(paymentsApp);
+    },
+    { prefix: '/payment-receipts' },
   );
 
   // Health check endpoint
