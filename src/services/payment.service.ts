@@ -14,9 +14,14 @@ import { createDataError } from '../errors/DataError.js';
 import {
   createReceipt,
   deleteReceiptById,
+  getReceiptByIdForUpdate,
   getReceiptByUser,
+  listPendingReceipts as listPendingReceiptsRepo,
+  updateReceiptStatus,
 } from '../repositories/payment-receipts.repository.js';
+import { insertAuditLogEntry } from '../repositories/audit-log.repository.js';
 import { cloudinaryStorage } from '../storage/cloudinary.storage.js';
+import { awardXp } from './xp.service.js';
 import type { PaymentReceipt } from '../db/schema/payments.js';
 
 const MAX_FILE_SIZE_BYTES = 5_000_000;
@@ -81,4 +86,71 @@ export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Prom
 
 export async function getOwnReceipt(userId: string): Promise<PaymentReceipt | null> {
   return getReceiptByUser(getAppDb(), userId);
+}
+
+const XP_AWARD_AMOUNT = 10;
+
+export interface ReviewReceiptDto {
+  decision: 'verified' | 'rejected';
+  reason?: string;
+}
+
+export async function reviewReceipt(
+  receiptId: string,
+  reviewerId: string,
+  dto: ReviewReceiptDto,
+): Promise<PaymentReceipt> {
+  if (dto.decision === 'rejected' && (!dto.reason || dto.reason.trim().length === 0)) {
+    throw createDataError('VALIDATION_FAILED', 'A rejection reason is required.');
+  }
+
+  const writerDb = getWriterDb();
+  return withDeadlockRetry(() =>
+    withTransaction(writerDb, async (tx) => {
+      const receipt = await getReceiptByIdForUpdate(tx, receiptId);
+      if (!receipt) {
+        throw createDataError('NOT_FOUND', 'Payment receipt not found.');
+      }
+      if (receipt.status !== 'pending') {
+        throw createDataError('VALIDATION_FAILED', 'This receipt has already been decided.');
+      }
+
+      const reviewedAt = new Date();
+      await updateReceiptStatus(tx, receiptId, {
+        status: dto.decision,
+        reviewedBy: reviewerId,
+        reviewedAt,
+        rejectionReason: dto.decision === 'rejected' ? dto.reason! : null,
+      });
+
+      if (dto.decision === 'verified') {
+        await awardXp(tx, {
+          userId: receipt.userId,
+          amount: XP_AWARD_AMOUNT,
+          reason: 'Gateways entry pass verified',
+          sourceType: 'payment_verification',
+          sourceId: receiptId,
+          awardedBy: reviewerId,
+        });
+      }
+
+      await insertAuditLogEntry(tx, {
+        actorUserId: reviewerId,
+        action: 'payment_receipt_reviewed',
+        targetType: 'payment_receipt',
+        targetId: receiptId,
+        metadata: { decision: dto.decision, reason: dto.reason ?? null },
+      });
+
+      const updated = await getReceiptByIdForUpdate(tx, receiptId);
+      if (!updated) {
+        throw createDataError('INTERNAL_ERROR', 'Receipt row disappeared during review.');
+      }
+      return updated;
+    }),
+  );
+}
+
+export async function listPendingReceipts(): Promise<PaymentReceipt[]> {
+  return listPendingReceiptsRepo(getAppDb());
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getAppDb } from '../db/index.js';
-import { createTestUser, deleteTestUser } from '../test-helpers/db.js';
+import { createTestUser, deleteTestUser, grantRole } from '../test-helpers/db.js';
 
 vi.mock('../storage/cloudinary.storage.js', () => ({
   cloudinaryStorage: {
@@ -105,5 +105,140 @@ describe('submitReceipt', () => {
 
     expect(second.status).toBe('pending');
     expect(second.fileName).toBe('receipt-retry.pdf');
+  });
+});
+
+const { reviewReceipt, listPendingReceipts: listPendingReceiptsService } = await import('./payment.service.js');
+
+describe('reviewReceipt', () => {
+  it('verifies a pending receipt and awards +10 XP exactly once', async () => {
+    const submitter = await createTestUser(db);
+    const reviewer = await createTestUser(db);
+    cleanupUserId = submitter.id; // reviewer cleaned up manually below
+
+    const receipt = await submitReceipt(submitter.id, {
+      fileData: SMALL_PDF_DATA_URI,
+      fileName: 'receipt.pdf',
+      fileSizeBytes: 9,
+    });
+
+    const reviewed = await reviewReceipt(receipt.id, reviewer.id, { decision: 'verified' });
+    expect(reviewed.status).toBe('verified');
+    expect(reviewed.reviewedBy).toBe(reviewer.id);
+
+    const { getTotalXpForUser } = await import('../repositories/xp.repository.js');
+    const total = await getTotalXpForUser(db, submitter.id);
+    expect(total).toBe(10);
+
+    // Delete the submitter (and its receipt, which FK-references the reviewer
+    // via reviewed_by) before the reviewer, or the reviewer delete violates
+    // payment_receipts_reviewed_by_users_id_fk.
+    await deleteTestUser(db, submitter.id);
+    await deleteTestUser(db, reviewer.id);
+    cleanupUserId = null;
+  });
+
+  it('rejects re-deciding an already-verified receipt', async () => {
+    const submitter = await createTestUser(db);
+    const reviewer = await createTestUser(db);
+    cleanupUserId = submitter.id;
+
+    const receipt = await submitReceipt(submitter.id, {
+      fileData: SMALL_PDF_DATA_URI,
+      fileName: 'receipt.pdf',
+      fileSizeBytes: 9,
+    });
+    await reviewReceipt(receipt.id, reviewer.id, { decision: 'verified' });
+
+    await expect(reviewReceipt(receipt.id, reviewer.id, { decision: 'verified' })).rejects.toMatchObject({
+      code: 'VALIDATION_FAILED',
+    });
+
+    // Delete the submitter (and its receipt, which FK-references the reviewer
+    // via reviewed_by) before the reviewer, or the reviewer delete violates
+    // payment_receipts_reviewed_by_users_id_fk.
+    await deleteTestUser(db, submitter.id);
+    await deleteTestUser(db, reviewer.id);
+    cleanupUserId = null;
+  });
+
+  it('requires a non-empty reason to reject', async () => {
+    const submitter = await createTestUser(db);
+    const reviewer = await createTestUser(db);
+    cleanupUserId = submitter.id;
+
+    const receipt = await submitReceipt(submitter.id, {
+      fileData: SMALL_PDF_DATA_URI,
+      fileName: 'receipt.pdf',
+      fileSizeBytes: 9,
+    });
+
+    await expect(reviewReceipt(receipt.id, reviewer.id, { decision: 'rejected' })).rejects.toMatchObject({
+      code: 'VALIDATION_FAILED',
+    });
+
+    // Delete the submitter (and its receipt, which FK-references the reviewer
+    // via reviewed_by) before the reviewer, or the reviewer delete violates
+    // payment_receipts_reviewed_by_users_id_fk.
+    await deleteTestUser(db, submitter.id);
+    await deleteTestUser(db, reviewer.id);
+    cleanupUserId = null;
+  });
+
+  it('rejects with a reason and does not award XP', async () => {
+    const submitter = await createTestUser(db);
+    const reviewer = await createTestUser(db);
+    cleanupUserId = submitter.id;
+
+    const receipt = await submitReceipt(submitter.id, {
+      fileData: SMALL_PDF_DATA_URI,
+      fileName: 'receipt.pdf',
+      fileSizeBytes: 9,
+    });
+
+    const reviewed = await reviewReceipt(receipt.id, reviewer.id, {
+      decision: 'rejected',
+      reason: 'Blurry, amount not legible',
+    });
+    expect(reviewed.status).toBe('rejected');
+    expect(reviewed.rejectionReason).toBe('Blurry, amount not legible');
+
+    const { getTotalXpForUser } = await import('../repositories/xp.repository.js');
+    const total = await getTotalXpForUser(db, submitter.id);
+    expect(total).toBe(0);
+
+    // Delete the submitter (and its receipt, which FK-references the reviewer
+    // via reviewed_by) before the reviewer, or the reviewer delete violates
+    // payment_receipts_reviewed_by_users_id_fk.
+    await deleteTestUser(db, submitter.id);
+    await deleteTestUser(db, reviewer.id);
+    cleanupUserId = null;
+  });
+
+  it('listPendingReceipts excludes decided receipts', async () => {
+    const submitter = await createTestUser(db);
+    const reviewer = await createTestUser(db);
+    cleanupUserId = submitter.id;
+
+    const receipt = await submitReceipt(submitter.id, {
+      fileData: SMALL_PDF_DATA_URI,
+      fileName: 'receipt.pdf',
+      fileSizeBytes: 9,
+    });
+
+    let pending = await listPendingReceiptsService();
+    expect(pending.some((r) => r.id === receipt.id)).toBe(true);
+
+    await reviewReceipt(receipt.id, reviewer.id, { decision: 'verified' });
+
+    pending = await listPendingReceiptsService();
+    expect(pending.some((r) => r.id === receipt.id)).toBe(false);
+
+    // Delete the submitter (and its receipt, which FK-references the reviewer
+    // via reviewed_by) before the reviewer, or the reviewer delete violates
+    // payment_receipts_reviewed_by_users_id_fk.
+    await deleteTestUser(db, submitter.id);
+    await deleteTestUser(db, reviewer.id);
+    cleanupUserId = null;
   });
 });
