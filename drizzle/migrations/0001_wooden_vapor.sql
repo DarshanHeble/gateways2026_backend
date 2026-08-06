@@ -1,7 +1,6 @@
 ALTER TABLE `payment_receipts` DROP FOREIGN KEY `payment_receipts_registration_id_registrations_id_fk`;
 --> statement-breakpoint
 ALTER TABLE `payment_receipts` MODIFY COLUMN `status` varchar(32) NOT NULL DEFAULT 'pending';--> statement-breakpoint
-ALTER TABLE `users` MODIFY COLUMN `updated_at` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP;--> statement-breakpoint
 ALTER TABLE `payment_receipts` ADD `cloudinary_public_id` varchar(255) NOT NULL;--> statement-breakpoint
 ALTER TABLE `payment_receipts` ADD `file_url` text NOT NULL;--> statement-breakpoint
 ALTER TABLE `payment_receipts` ADD `file_name` varchar(255) NOT NULL;--> statement-breakpoint

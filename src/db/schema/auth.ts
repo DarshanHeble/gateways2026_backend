@@ -31,7 +31,7 @@ export const users = mysqlTable('users', {
   createdAt: timestamp('created_at', { fsp: 3 })
     .notNull()
     .default(sql`(now())`),
-  updatedAt: timestamp('updated_at')
+  updatedAt: timestamp('updated_at', { fsp: 3 })
     .notNull()
     .default(sql`(now())`)
     .onUpdateNow(),
