@@ -33,6 +33,7 @@ export const cloudinaryStorage: StorageAdapter = {
     try {
       const result = await cloudinary.uploader.upload(data, {
         resource_type: 'raw',
+        type: 'authenticated',
         folder,
         public_id: publicId,
         overwrite: false,
@@ -46,9 +47,18 @@ export const cloudinaryStorage: StorageAdapter = {
   async deleteFile(publicId: string): Promise<void> {
     ensureConfigured();
     try {
-      await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
+      await cloudinary.uploader.destroy(publicId, { resource_type: 'raw', type: 'authenticated' });
     } catch {
       throw createDataError('STORAGE_UNAVAILABLE', 'Failed to delete receipt from storage.');
     }
+  },
+
+  createSignedDownloadUrl(publicId: string): string {
+    ensureConfigured();
+    return cloudinary.utils.private_download_url(publicId, '', {
+      resource_type: 'raw',
+      type: 'authenticated',
+      expires_at: Math.floor(Date.now() / 1000) + 300, // 5 minutes
+    });
   },
 };

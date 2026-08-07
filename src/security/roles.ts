@@ -7,15 +7,14 @@
  *   - Always re-derives roles from the database — never trusts a cached claim.
  *   - Called inside route preHandlers, NOT in the global session hook.
  *
- * NOTE: requireRole() / assertAdmin() require the `user_roles` table, which lives
- * in the identity schema (implemented in Phase 4). The stubs below are marked
- * accordingly — assertAuthenticated works immediately (uses request.user only).
+ * assertAdmin queries the `user_roles` table (src/db/schema/identity.ts) on
+ * every call — always re-derived from the writer DB, never cached.
  */
 
 import type { FastifyRequest } from 'fastify';
 import { and, eq } from 'drizzle-orm';
 import { createDataError } from '../errors/DataError.js';
-import { getAppDb } from '../db/index.js';
+import { getWriterDb } from '../db/index.js';
 import { userRoles } from '../db/schema/identity.js';
 
 // ─── Role Enum ────────────────────────────────────────────────────────────────
@@ -55,7 +54,7 @@ export function assertAuthenticated(request: FastifyRequest): asserts request is
 export async function assertAdmin(request: FastifyRequest): Promise<void> {
   assertAuthenticated(request);
 
-  const db = getAppDb();
+  const db = getWriterDb();
   const rows = await db
     .select({ id: userRoles.id })
     .from(userRoles)

@@ -13,4 +13,5 @@ export interface UploadResult {
 export interface StorageAdapter {
   uploadFile(params: { data: string; folder: string; publicId: string }): Promise<UploadResult>;
   deleteFile(publicId: string): Promise<void>;
+  createSignedDownloadUrl(publicId: string): string;
 }
