@@ -40,7 +40,17 @@ export async function registerSwagger(app: FastifyInstance, config: AppConfig) {
         },
       },
     },
-    transform: jsonSchemaTransform,
+    transform: (params) => {
+      try {
+        return jsonSchemaTransform(params);
+      } catch (e) {
+        // Fallback for non-Zod schemas (like raw JSON schemas for file uploads)
+        return {
+          schema: params.schema as any,
+          url: params.url,
+        };
+      }
+    },
   });
 
   // 3. Register Swagger UI Interface
