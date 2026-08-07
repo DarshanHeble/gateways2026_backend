@@ -27,6 +27,10 @@ if (!dbUrl && process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME)
   dbUrl = `mysql://${user}:${pass}@${host}:${port}/${dbName}`;
 }
 
+// ⚠️ See the warning comment atop src/db/schema/index.ts before running
+// `generate` or `push` — this schema barrel doesn't yet cover every table
+// in the existing database, and diffing against it can propose destructive
+// DROP TABLE statements for other contributors' tables.
 export default defineConfig({
   schema: './src/db/schema/index.ts',
   out: './drizzle/migrations',

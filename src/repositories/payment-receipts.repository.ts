@@ -46,7 +46,11 @@ export async function getReceiptByIdForUpdate(db: Db, id: string): Promise<Payme
 }
 
 export async function listPendingReceipts(db: Db): Promise<PaymentReceipt[]> {
-  return db.select().from(paymentReceipts).where(eq(paymentReceipts.status, 'pending'));
+  return db
+    .select()
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.status, 'pending'))
+    .orderBy(paymentReceipts.submittedAt);
 }
 
 export async function updateReceiptStatus(
