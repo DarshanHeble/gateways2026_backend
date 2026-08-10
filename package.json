@@ -13,6 +13,7 @@
     "db:push:preprod": "NODE_ENV=preproduction drizzle-kit push",
     "db:push:prod": "NODE_ENV=production drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "role:grant": "tsx scripts/grant-role.ts",
     "db:up": "docker compose up -d mysql",
     "db:down": "docker compose stop mysql",
     "build": "tsc",

@@ -39,6 +39,20 @@ const envSchema = z.object({
 
   // CORS
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  /**
+   * Vercel project slug for the admin dashboard, e.g. `dashboard-inky-kappa-88`.
+   * Enables CORS for that project's preview deploys ONLY, and never in
+   * production. Leave unset to disable preview access entirely.
+   */
+  CORS_VERCEL_PROJECT: z.string().optional(),
+
+  /**
+   * The one-time entry-pass fee, in rupees. The backend does not record a
+   * per-payment amount (one global pass per user), so this is the amount every
+   * receipt represents. Configurable rather than hardcoded so a fee change is not
+   * a code change.
+   */
+  ENTRY_PASS_AMOUNT_INR: z.coerce.number().int().positive().default(250),
 
   // Storage / Mail optional
   SMTP_URL: z.string().optional(),
