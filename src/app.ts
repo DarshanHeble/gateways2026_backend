@@ -1,16 +1,19 @@
 import Fastify from 'fastify';
 import { z } from 'zod';
 import { loadConfig } from './config/env.js';
-import { registerPlugins } from './plugins/security.js';
+import { registerCsrfHook, registerPlugins } from './plugins/security.js';
 import { registerSwagger } from './plugins/swagger.js';
 import { registerSessionHook } from './plugins/jwt-auth.js';
-import { registerAuthRoutes } from './routes/auth.routes.js';
-import { registerPaymentReceiptRoutes } from './routes/payment-receipts.routes.js';
+import { registerV1Routes } from './routes/index.js';
 
 export async function buildApp() {
   const config = loadConfig();
 
   const app = Fastify({
+    // Render (and most PaaS) terminate TLS at a proxy, so without this every
+    // request reports the proxy's IP — collapsing per-IP rate limiting into a
+    // single global bucket and making request logs useless.
+    trustProxy: true,
     logger: {
       level: config.NODE_ENV === 'production' ? 'info' : 'debug',
       redact: ['headers.authorization', 'headers.cookie', 'body.password'],
@@ -20,27 +23,20 @@ export async function buildApp() {
   // Register Swagger UI documentation FIRST
   await registerSwagger(app, config);
 
-  // Register security plugins (CORS, Helmet, rate-limit, cookies, CSRF, error handler)
+  // Register security plugins (CORS, Helmet, rate-limit, cookies, error handler)
   await registerPlugins(app, config);
 
-  // Register global session validation hook (must be after cookie plugin)
+  // Register global session validation hook (must be after the cookie plugin)
   await registerSessionHook(app);
 
-  // Register auth routes under /auth prefix
-  await app.register(
-    async (authApp) => {
-      await registerAuthRoutes(authApp, config);
-    },
-    { prefix: '/auth' },
-  );
+  // CSRF must be registered AFTER the session hook: Fastify runs `onRequest`
+  // hooks in registration order, and the CSRF hook reads `request.authTransport`,
+  // which the session hook sets. Registered earlier, that flag is always
+  // undefined — which breaks the Bearer skip in the fail-open direction.
+  await registerCsrfHook(app);
 
-  // Register payment-receipt routes under /payment-receipts prefix
-  await app.register(
-    async (paymentsApp) => {
-      await registerPaymentReceiptRoutes(paymentsApp);
-    },
-    { prefix: '/payment-receipts' },
-  );
+  // All API routes, namespaced under /api/v1 and split by audience.
+  await registerV1Routes(app, config);
 
   // Health check endpoint
   app.get('/health', {
