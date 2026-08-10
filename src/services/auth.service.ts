@@ -18,6 +18,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { v7 as uuidv7 } from 'uuid';
 import crypto from 'node:crypto';
 import { getAppDb } from '../db/index.js';
+import { GOOGLE_CALLBACK_PATH } from '../config/routes.js';
 import { createDataError } from '../errors/DataError.js';
 import { hashPassword, verifyPassword } from '../security/password.js';
 import { generateOtp, generateSessionToken, hashOtp, hashSessionToken, verifyOtp } from '../security/jwt.js';
@@ -38,11 +39,28 @@ import {
   assertAuthenticated,
   clearSessionCookie,
   setSessionCookie,
+  BEARER_SESSION_MAX_AGE_MS,
+  type AuthTransport,
 } from '../plugins/jwt-auth.js';
 import type { AppConfig } from '../config/env.js';
 
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CSRF_COOKIE_NAME = 'csrf_token';
+const OAUTH_STATE_COOKIE_NAME = 'oauth_state';
+
+/**
+ * Build the Google OAuth redirect URI.
+ *
+ * Used by BOTH the authorization-request builder and the callback handler. Google
+ * requires the `redirect_uri` sent at each step to match byte-for-byte, and to
+ * match what is registered in the Google Cloud Console — so these must never be
+ * written as two separate literals. They previously were, which is a silent
+ * production breakage waiting to happen: a drift between them fails at Google,
+ * not in CI.
+ */
+function buildGoogleCallbackUrl(config: AppConfig): string {
+  return `${config.OAUTH_CALLBACK_BASE_URL ?? config.APP_BASE_URL}${GOOGLE_CALLBACK_PATH}`;
+}
 
 // ─── Helper: Issue CSRF token cookie ─────────────────────────────────────────
 
@@ -59,15 +77,40 @@ function issueCsrfToken(reply: FastifyReply): string {
 
 // ─── Helper: Create session + set cookies ────────────────────────────────────
 
-async function createSessionAndSetCookies(
+/**
+ * Which credential the client is asking for, from the `X-Auth-Transport` header.
+ *
+ * Browsers get httpOnly cookies (default). The admin dashboard and mobile app
+ * live on other origins where our cookie is third-party, so they opt into a
+ * bearer token instead.
+ */
+export function resolveRequestedTransport(request: FastifyRequest): AuthTransport {
+  return String(request.headers['x-auth-transport'] ?? '').toLowerCase() === 'bearer'
+    ? 'bearer'
+    : 'cookie';
+}
+
+/**
+ * Create a session and hand back exactly ONE credential.
+ *
+ * Cookie and bearer are mutually exclusive by design. Issuing both would put the
+ * same secret in a JS-readable response body *and* an httpOnly cookie, which
+ * makes the httpOnly protection worthless — XSS could just read the body copy.
+ *
+ * Returns the raw token only for bearer callers; cookie callers get `null` and
+ * the token never leaves the Set-Cookie header.
+ */
+async function createSessionAndIssueCredentials(
   userId: string,
   reply: FastifyReply,
   config: AppConfig,
-): Promise<void> {
+  transport: AuthTransport,
+): Promise<{ token: string; expiresAt: string } | null> {
   const db = getAppDb();
   const rawToken = generateSessionToken();
   const hashedToken = hashSessionToken(rawToken);
-  const expires = new Date(Date.now() + SESSION_MAX_AGE_MS);
+  const maxAgeMs = transport === 'bearer' ? BEARER_SESSION_MAX_AGE_MS : SESSION_MAX_AGE_MS;
+  const expires = new Date(Date.now() + maxAgeMs);
 
   await createSession(db, {
     id: uuidv7(),
@@ -76,8 +119,16 @@ async function createSessionAndSetCookies(
     expires,
   });
 
+  if (transport === 'bearer') {
+    // No session cookie and no CSRF cookie: the client sends the token in an
+    // Authorization header, which browsers never attach automatically, so there
+    // is nothing for double-submit CSRF to protect.
+    return { token: rawToken, expiresAt: expires.toISOString() };
+  }
+
   setSessionCookie(reply, rawToken, { isProd: config.NODE_ENV !== 'development' });
   issueCsrfToken(reply);
+  return null;
 }
 
 // ─── 1. Sign Up (Password) ───────────────────────────────────────────────────
@@ -170,7 +221,13 @@ export async function verifyEmail(
   dto: VerifyEmailDto,
   reply: FastifyReply,
   config: AppConfig,
-): Promise<{ message: string; user: { id: string; email: string } }> {
+  transport: AuthTransport = 'cookie',
+): Promise<{
+  message: string;
+  user: { id: string; email: string };
+  token?: string;
+  expiresAt?: string;
+}> {
   const db = getAppDb();
   const email = dto.email.toLowerCase().trim();
 
@@ -206,11 +263,12 @@ export async function verifyEmail(
   ]);
 
   // Create session — user is logged in immediately after verification
-  await createSessionAndSetCookies(user.id, reply, config);
+  const credentials = await createSessionAndIssueCredentials(user.id, reply, config, transport);
 
   return {
     message: 'Email verified successfully. You are now signed in.',
     user: { id: user.id, email: user.email },
+    ...(credentials ?? {}),
   };
 }
 
@@ -232,27 +290,36 @@ export interface SigninDto {
  *  5. bcrypt.compare password — INVALID_CREDENTIALS on mismatch.
  *  6. Create session → set __session cookie + csrf_token cookie.
  */
-export async function signinWithPassword(
+/**
+ * Verify an email + password WITHOUT creating a session.
+ *
+ * Split out so callers can insert extra checks between "these credentials are
+ * valid" and "issue a credential". The admin door needs exactly that: it must
+ * reject a non-admin *before* a session row exists, otherwise a rejected login
+ * still leaves a usable token behind for the participant API.
+ *
+ * Throws INVALID_CREDENTIALS for both unknown users and wrong passwords, so the
+ * endpoint cannot be used to enumerate registered emails.
+ */
+export async function verifyPasswordCredentials(
   dto: SigninDto,
-  reply: FastifyReply,
-  config: AppConfig,
-): Promise<{ user: { id: string; email: string } }> {
+): Promise<{ id: string; email: string }> {
   const db = getAppDb();
   const email = dto.email.toLowerCase().trim();
 
   const user = await findUserWithHashByEmail(db, email);
 
-  // Step 2: existence check — always INVALID_CREDENTIALS to avoid user enumeration
+  // Existence check — always INVALID_CREDENTIALS to avoid user enumeration
   if (!user || !user.passwordHash) {
     throw createDataError('INVALID_CREDENTIALS');
   }
 
-  // Step 3: suspended account
+  // Suspended account
   if (user.status === 'BANNED' || user.status === 'INACTIVE') {
     throw createDataError('FORBIDDEN', 'Your account has been suspended.');
   }
 
-  // Step 4: email not verified yet
+  // Email not verified yet
   if (!user.emailVerified) {
     throw createDataError(
       'VALIDATION_FAILED',
@@ -260,16 +327,40 @@ export async function signinWithPassword(
     );
   }
 
-  // Step 5: password check (timing-safe bcrypt compare)
+  // Password check (timing-safe bcrypt compare)
   const passwordValid = await verifyPassword(dto.password, user.passwordHash);
   if (!passwordValid) {
     throw createDataError('INVALID_CREDENTIALS');
   }
 
-  // Step 6: create session
-  await createSessionAndSetCookies(user.id, reply, config);
+  return { id: user.id, email: user.email };
+}
 
-  return { user: { id: user.id, email: user.email } };
+export async function signinWithPassword(
+  dto: SigninDto,
+  reply: FastifyReply,
+  config: AppConfig,
+  transport: AuthTransport = 'cookie',
+): Promise<{ user: { id: string; email: string }; token?: string; expiresAt?: string }> {
+  const user = await verifyPasswordCredentials(dto);
+  const credentials = await createSessionAndIssueCredentials(user.id, reply, config, transport);
+
+  return { user, ...(credentials ?? {}) };
+}
+
+/**
+ * Issue a session for an already-verified user.
+ *
+ * Exported for the admin signin door, which verifies credentials, checks the
+ * ADMIN role, and only then asks for a credential.
+ */
+export async function issueSessionFor(
+  userId: string,
+  reply: FastifyReply,
+  config: AppConfig,
+  transport: AuthTransport,
+): Promise<{ token: string; expiresAt: string } | null> {
+  return createSessionAndIssueCredentials(userId, reply, config, transport);
 }
 
 // ─── 4. Sign Out ─────────────────────────────────────────────────────────────
@@ -315,13 +406,31 @@ const GOOGLE_SCOPES = 'openid email profile';
  * Build the Google OAuth2 authorization redirect URL.
  * Frontend should redirect the user to the returned URL.
  */
-export function initiateGoogleOAuth(config: AppConfig): { url: string } {
+export function initiateGoogleOAuth(config: AppConfig, reply: FastifyReply): { url: string } {
   if (!config.OAUTH_GOOGLE_CLIENT_ID) {
     throw createDataError('INTERNAL_ERROR', 'Google OAuth is not configured on this server.');
   }
 
-  const callbackUrl = `${config.OAUTH_CALLBACK_BASE_URL ?? config.APP_BASE_URL}/auth/callback/google`;
+  const callbackUrl = buildGoogleCallbackUrl(config);
   const state = crypto.randomBytes(16).toString('hex'); // CSRF state param
+
+  // Persist the state so the callback can prove this flow started here. It was
+  // previously generated, sent to Google, and then never checked — which left
+  // login-CSRF wide open: an attacker could feed a victim their own auth code and
+  // silently bind the victim's browser to the attacker's Google account.
+  //
+  // A signed httpOnly cookie is enough; the value is single-use and short-lived,
+  // so it needs no DB row.
+  reply.setCookie(OAUTH_STATE_COOKIE_NAME, state, {
+    httpOnly: true,
+    secure: config.NODE_ENV !== 'development',
+    // 'lax' (not 'strict') is required: the cookie must survive Google's
+    // top-level redirect back to the callback.
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 10 * 60, // 10 minutes — an OAuth round-trip, not a session
+    signed: true,
+  });
 
   const params = new URLSearchParams({
     client_id: config.OAUTH_GOOGLE_CLIENT_ID,
@@ -369,14 +478,32 @@ interface GoogleUserInfo {
  */
 export async function handleGoogleCallback(
   code: string,
+  request: FastifyRequest,
   reply: FastifyReply,
   config: AppConfig,
+  state?: string,
 ): Promise<{ user: { id: string; email: string } }> {
   if (!config.OAUTH_GOOGLE_CLIENT_ID || !config.OAUTH_GOOGLE_CLIENT_SECRET) {
     throw createDataError('INTERNAL_ERROR', 'Google OAuth is not configured on this server.');
   }
 
-  const callbackUrl = `${config.OAUTH_CALLBACK_BASE_URL ?? config.APP_BASE_URL}/auth/callback/google`;
+  // Verify the state round-tripped from initiateGoogleOAuth before spending the
+  // authorization code. Consume the cookie either way so a state can't be replayed.
+  const stateCookie = request.cookies[OAUTH_STATE_COOKIE_NAME];
+  reply.clearCookie(OAUTH_STATE_COOKIE_NAME, { path: '/' });
+
+  const expectedState = stateCookie ? request.unsignCookie(stateCookie) : null;
+  if (
+    !state ||
+    !expectedState?.valid ||
+    !expectedState.value ||
+    expectedState.value.length !== state.length ||
+    !crypto.timingSafeEqual(Buffer.from(expectedState.value), Buffer.from(state))
+  ) {
+    throw createDataError('VALIDATION_FAILED', 'Invalid or expired OAuth state.');
+  }
+
+  const callbackUrl = buildGoogleCallbackUrl(config);
 
   // Step 1: exchange code for tokens
   const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
@@ -436,8 +563,11 @@ export async function handleGoogleCallback(
     },
   });
 
-  // Step 4: create session
-  await createSessionAndSetCookies(userId, reply, config);
+  // Step 4: create session.
+  // Cookie-only: this is a top-level browser redirect, so there is no JSON body
+  // for a native client to read a token out of. Mobile Google sign-in needs a
+  // separate one-time-code exchange rather than reusing this callback.
+  await createSessionAndIssueCredentials(userId, reply, config, 'cookie');
 
   return { user: { id: userId, email: googleUser.email } };
 }

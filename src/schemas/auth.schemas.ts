@@ -72,12 +72,26 @@ export const SignupResponseSchema = z.object({
   message: z.string(),
 });
 
+/**
+ * Bearer credentials, present only when the caller sent `X-Auth-Transport: bearer`
+ * (admin dashboard, mobile). Cookie callers get neither field — the token stays in
+ * the httpOnly Set-Cookie header and never enters a JS-readable body.
+ *
+ * These must be declared here: the Zod serializer strips any field absent from the
+ * response schema, so an undeclared token would be silently dropped.
+ */
+const BearerCredentialFields = {
+  token: z.string().optional(),
+  expiresAt: z.string().optional(),
+};
+
 export const VerifyEmailResponseSchema = z.object({
   message: z.string(),
   user: z.object({
     id: z.string(),
     email: z.string(),
   }),
+  ...BearerCredentialFields,
 });
 
 export const SigninResponseSchema = z.object({
@@ -85,6 +99,7 @@ export const SigninResponseSchema = z.object({
     id: z.string(),
     email: z.string(),
   }),
+  ...BearerCredentialFields,
 });
 
 export const SessionResponseSchema = z.object({

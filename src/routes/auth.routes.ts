@@ -29,12 +29,14 @@ import {
   handleGoogleCallback,
   initiateGoogleOAuth,
   signout,
+  resolveRequestedTransport,
   signinWithPassword,
   signupWithPassword,
   verifyEmail,
 } from '../services/auth.service.js';
 import { assertAuthenticated } from '../plugins/jwt-auth.js';
 import { assertAdmin } from '../security/roles.js';
+import { createDataError } from '../errors/DataError.js';
 import type { AppConfig } from '../config/env.js';
 import {
   GoogleCallbackQuerySchema,
@@ -114,7 +116,12 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       },
     },
     async (request, reply) => {
-      const result = await verifyEmail(request.body, reply, config);
+      const result = await verifyEmail(
+        request.body,
+        reply,
+        config,
+        resolveRequestedTransport(request),
+      );
       return reply.send(result);
     },
   );
@@ -140,7 +147,12 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       },
     },
     async (request, reply) => {
-      const result = await signinWithPassword(request.body, reply, config);
+      const result = await signinWithPassword(
+        request.body,
+        reply,
+        config,
+        resolveRequestedTransport(request),
+      );
       return reply.send(result);
     },
   );
@@ -217,7 +229,7 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       },
     },
     async (_request, reply) => {
-      const result = initiateGoogleOAuth(config);
+      const result = initiateGoogleOAuth(config, reply);
       return reply.send(result);
     },
   );
@@ -243,7 +255,7 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       },
     },
     async (request, reply) => {
-      const { code, error } = request.query;
+      const { code, error, state } = request.query;
 
       if (error || !code) {
         throw {
@@ -252,7 +264,7 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
         };
       }
 
-      const result = await handleGoogleCallback(code, reply, config);
+      const result = await handleGoogleCallback(code, request, reply, config, state);
       return reply.send(result);
     },
   );
@@ -279,18 +291,22 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
         },
       },
     },
-    async (request, reply) => {
-      // assertAuthenticated first — this works now
+    async (request) => {
       assertAuthenticated(request);
-      // assertAdmin deferred to Phase 4 (requires user_roles table)
       await assertAdmin(request);
 
-      // If we reach here (Phase 4+): insert/upsert user_roles row
-      // const { userId } = request.params;
-      // const { role, eventScopeId } = request.body;
-      // await grantRole(db, { userId, role, eventScopeId, grantedBy: request.user.id });
-
-      return reply.send({ message: 'Role granted.' }); // unreachable until Phase 4
+      // Deliberately not implemented rather than silently doing nothing. This
+      // previously returned 200 "Role granted." without writing a row, so an
+      // admin would believe a role had been assigned when it had not.
+      //
+      // Role management is not in the confirmed dashboard scope, and the CLI
+      // (`npm run role:grant -- --email <email> --role ADMIN`) already covers
+      // bootstrap and day-to-day grants. Build this out when a UI actually needs
+      // it — with guards against self-revoking ADMIN and removing the last one.
+      throw createDataError(
+        'INTERNAL_ERROR',
+        'Role management over HTTP is not implemented. Use: npm run role:grant -- --email <email> --role <ROLE>',
+      );
     },
   );
 }
