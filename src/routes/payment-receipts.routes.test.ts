@@ -31,7 +31,7 @@ describe('POST /payment-receipts — bodyLimit', () => {
 
     const response = await app.inject({
       method: 'POST',
-      url: '/payment-receipts',
+      url: '/api/v1/payment-receipts',
       cookies: {
         csrf_token: csrfToken,
       },

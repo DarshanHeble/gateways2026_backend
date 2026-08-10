@@ -15,7 +15,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { assertAuthenticated } from '../plugins/jwt-auth.js';
-import { assertAdmin } from '../security/roles.js';
+import { serializeReceipt } from '../serializers/payment.serializer.js';
 import { cloudinaryStorage } from '../storage/cloudinary.storage.js';
 import {
   getOwnReceipt,
@@ -44,25 +44,9 @@ const ErrorResponseSchema = z.object({
   }),
 });
 
-function serializeReceipt(receipt: PaymentReceipt) {
-  return {
-    id: receipt.id,
-    userId: receipt.userId,
-    fileUrl: cloudinaryStorage.createSignedDownloadUrl(receipt.cloudinaryPublicId),
-    fileName: receipt.fileName,
-    fileSizeBytes: receipt.fileSizeBytes,
-    status: receipt.status as 'pending' | 'verified' | 'rejected',
-    submittedAt:
-      typeof receipt.submittedAt === 'string' ? receipt.submittedAt : receipt.submittedAt.toISOString(),
-    reviewedBy: receipt.reviewedBy,
-    reviewedAt:
-      receipt.reviewedAt == null
-        ? null
-        : typeof receipt.reviewedAt === 'string'
-          ? receipt.reviewedAt
-          : receipt.reviewedAt.toISOString(),
-    rejectionReason: receipt.rejectionReason,
-  };
+/** Shared with the admin surface — see src/serializers/payment.serializer.ts. */
+function serialize(receipt: PaymentReceipt) {
+  return serializeReceipt(receipt, cloudinaryStorage.createSignedDownloadUrl(receipt.cloudinaryPublicId));
 }
 
 export async function registerPaymentReceiptRoutes(app: FastifyInstance) {
@@ -87,7 +71,7 @@ export async function registerPaymentReceiptRoutes(app: FastifyInstance) {
     async (request, reply) => {
       assertAuthenticated(request);
       const receipt = await submitReceipt(request.user.id, request.body);
-      return reply.status(201).send(serializeReceipt(receipt));
+      return reply.status(201).send(serialize(receipt));
     },
   );
 
@@ -106,53 +90,12 @@ export async function registerPaymentReceiptRoutes(app: FastifyInstance) {
     async (request) => {
       assertAuthenticated(request);
       const receipt = await getOwnReceipt(request.user.id);
-      return receipt ? serializeReceipt(receipt) : null;
+      return receipt ? serialize(receipt) : null;
     },
   );
 
-  router.get(
-    '/pending',
-    {
-      schema: {
-        tags: ['Payments'],
-        summary: 'List receipts awaiting review (Admin only)',
-        response: {
-          200: PaymentReceiptListResponseSchema,
-          401: ErrorResponseSchema,
-          403: ErrorResponseSchema,
-        },
-      },
-    },
-    async (request) => {
-      assertAuthenticated(request);
-      await assertAdmin(request);
-      const receipts = await listPendingReceipts();
-      return receipts.map(serializeReceipt);
-    },
-  );
-
-  router.post(
-    '/:id/review',
-    {
-      schema: {
-        tags: ['Payments'],
-        summary: 'Approve or reject a payment receipt (Admin only)',
-        params: ReceiptIdParamSchema,
-        body: ReviewReceiptBodySchema,
-        response: {
-          200: PaymentReceiptResponseSchema,
-          400: ErrorResponseSchema,
-          401: ErrorResponseSchema,
-          403: ErrorResponseSchema,
-          404: ErrorResponseSchema,
-        },
-      },
-    },
-    async (request) => {
-      assertAuthenticated(request);
-      await assertAdmin(request);
-      const receipt = await reviewReceipt(request.params.id, request.user.id, request.body);
-      return serializeReceipt(receipt);
-    },
-  );
+  // Admin review endpoints (list queue, approve/reject) now live at
+  // /api/v1/admin/payments — see src/routes/admin/payments.routes.ts. They serve a
+  // different audience with a different response shape, so they are no longer
+  // interleaved with the participant's own-receipt routes.
 }

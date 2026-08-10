@@ -10,14 +10,17 @@
 import { v7 as uuidv7 } from 'uuid';
 import { getAppDb, getWriterDb } from '../db/index.js';
 import { withDeadlockRetry, withTransaction } from '../db/transaction.js';
-import { createDataError } from '../errors/DataError.js';
+import { DataError, createDataError } from '../errors/DataError.js';
 import {
   createReceipt,
   deleteReceiptById,
+  getReceiptById,
   getReceiptByIdForUpdate,
   getReceiptByUser,
   listPendingReceipts as listPendingReceiptsRepo,
+  listReceipts,
   updateReceiptStatus,
+  type ReceiptWithEmails,
 } from '../repositories/payment-receipts.repository.js';
 import { insertAuditLogEntry } from '../repositories/audit-log.repository.js';
 import { cloudinaryStorage } from '../storage/cloudinary.storage.js';
@@ -181,4 +184,101 @@ export async function reviewReceipt(
 
 export async function listPendingReceipts(): Promise<PaymentReceipt[]> {
   return listPendingReceiptsRepo(getAppDb());
+}
+
+// ─── Admin surface ────────────────────────────────────────────────────────────
+
+/** Cursor is opaque to clients: base64 of the keyset pair we page on. */
+function encodeCursor(receipt: { submittedAt: Date | string; id: string }): string {
+  const submittedAt =
+    typeof receipt.submittedAt === 'string'
+      ? receipt.submittedAt
+      : receipt.submittedAt.toISOString();
+  return Buffer.from(JSON.stringify({ submittedAt, id: receipt.id })).toString('base64url');
+}
+
+function decodeCursor(cursor?: string): { submittedAt: string; id: string } | undefined {
+  if (!cursor) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString());
+    if (typeof parsed?.submittedAt === 'string' && typeof parsed?.id === 'string') return parsed;
+  } catch {
+    /* fall through to the shared error below */
+  }
+  throw createDataError('VALIDATION_FAILED', 'Malformed pagination cursor.');
+}
+
+/**
+ * Paginated receipt listing for the review queue.
+ *
+ * Paginated from the start deliberately: the dashboard is a client we don't
+ * control, so adding pagination later would be a breaking response-shape change.
+ */
+export async function listPaymentsForAdmin(params: {
+  status?: string;
+  userId?: string;
+  limit?: number;
+  cursor?: string;
+}): Promise<{ items: ReceiptWithEmails[]; nextCursor: string | null }> {
+  const limit = Math.min(Math.max(params.limit ?? 50, 1), 200);
+
+  // Fetch one extra row to detect "there is another page" without a COUNT query.
+  const rows = await listReceipts(getAppDb(), {
+    status: params.status,
+    userId: params.userId,
+    limit: limit + 1,
+    cursor: decodeCursor(params.cursor),
+  });
+
+  const items = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? encodeCursor(items[items.length - 1]) : null;
+  return { items, nextCursor };
+}
+
+export async function getPaymentForAdmin(id: string): Promise<ReceiptWithEmails> {
+  const receipt = await getReceiptById(getAppDb(), id);
+  if (!receipt) throw createDataError('NOT_FOUND', 'Payment receipt not found.');
+  return receipt;
+}
+
+/**
+ * Mint a short-lived signed URL for one receipt PDF.
+ *
+ * On demand rather than embedded in list responses: the signature expires in
+ * minutes, and this gives an audit point for who opened which receipt.
+ */
+export async function getReceiptDownloadUrl(id: string): Promise<{ url: string }> {
+  const receipt = await getReceiptById(getAppDb(), id);
+  if (!receipt) throw createDataError('NOT_FOUND', 'Payment receipt not found.');
+  return { url: cloudinaryStorage.createSignedDownloadUrl(receipt.cloudinaryPublicId) };
+}
+
+/**
+ * Review many receipts in one call.
+ *
+ * Each receipt gets its own transaction and failures are collected rather than
+ * thrown: one already-decided receipt in a batch of 50 must not roll back the
+ * other 49. Callers get partial success plus a per-id reason.
+ */
+export async function bulkReviewReceipts(
+  receiptIds: string[],
+  reviewerId: string,
+  dto: ReviewReceiptDto,
+): Promise<{ updated: number; failures: { id: string; code: string }[] }> {
+  const failures: { id: string; code: string }[] = [];
+  let updated = 0;
+
+  for (const id of receiptIds) {
+    try {
+      await reviewReceipt(id, reviewerId, dto);
+      updated++;
+    } catch (err) {
+      failures.push({
+        id,
+        code: err instanceof DataError ? err.code : 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  return { updated, failures };
 }
