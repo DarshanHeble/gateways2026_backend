@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { loadConfig } from './config/env.js';
 import { registerCsrfHook, registerPlugins } from './plugins/security.js';
 import { registerSwagger } from './plugins/swagger.js';
+import fastifyMultipart from '@fastify/multipart';
+import { uploadRoutes } from './routes/upload.routes.js';
 import { registerSessionHook } from './plugins/jwt-auth.js';
 import { registerV1Routes } from './routes/index.js';
 
@@ -20,11 +22,21 @@ export async function buildApp() {
     },
   });
 
+  // Register multipart plugin for file uploads
+  await app.register(fastifyMultipart, {
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB limit
+    }
+  });
+
   // Register Swagger UI documentation FIRST
   await registerSwagger(app, config);
 
   // Register security plugins (CORS, Helmet, rate-limit, cookies, error handler)
   await registerPlugins(app, config);
+
+  // Standalone upload endpoint, kept at the root outside /api/v1.
+  await app.register(uploadRoutes);
 
   // Register global session validation hook (must be after the cookie plugin)
   await registerSessionHook(app);

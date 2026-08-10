@@ -26,6 +26,11 @@ const EXPECTED_PATHS = [
   // Unversioned by design
   '/health',
 
+  // Pre-existing, unversioned, and currently UNAUTHENTICATED — anyone can push a
+  // file to our Cloudinary account. Listed here so it stays visible rather than
+  // forgotten; see upload.routes.ts.
+  '/upload',
+
   // Participant surface — website + mobile-user
   '/api/v1/auth/admin/roles/{userId}',
   '/api/v1/auth/callback/google',
