@@ -34,17 +34,12 @@ export async function registerSwagger(app: FastifyInstance, config: AppConfig) {
         },
       },
     },
-    transform: (params) => {
-      try {
-        return jsonSchemaTransform(params);
-      } catch (e) {
-        // Fallback for non-Zod schemas (like raw JSON schemas for file uploads)
-        return {
-          schema: params.schema as any,
-          url: params.url,
-        };
-      }
-    },
+    // Every route declares its schema through the Zod type provider, so this
+    // transform is total. It used to be wrapped in a try/catch that fell back to
+    // the raw schema for POST /upload's hand-written JSON schema; with that route
+    // gone, the catch would only ever swallow a genuine Zod transform failure and
+    // emit silently-wrong docs. Errors here should be loud.
+    transform: jsonSchemaTransform,
   });
 
   // 3. Register Swagger UI Interface
@@ -55,8 +50,14 @@ export async function registerSwagger(app: FastifyInstance, config: AppConfig) {
       deepLinking: true,
       displayRequestDuration: true,
       requestInterceptor: function (request: any) {
-        // Automatically attach CSRF token from cookie to header for Swagger requests
-        const match = document.cookie.match(/(^|;)\s*csrf_token\s*=\s*([^;]+)/);
+        // Automatically attach CSRF token from cookie to header for Swagger requests.
+        //
+        // This function is serialized and executed in the BROWSER, so `document`
+        // exists at runtime. Reached via globalThis rather than adding "dom" to
+        // tsconfig's lib, which would make `document`/`window` typecheck
+        // everywhere in a Node server — turning a compile error into a 3am one.
+        const cookie = (globalThis as { document?: { cookie: string } }).document?.cookie ?? '';
+        const match = cookie.match(/(^|;)\s*csrf_token\s*=\s*([^;]+)/);
         if (match) {
           request.headers['x-csrf-token'] = match[2];
         }

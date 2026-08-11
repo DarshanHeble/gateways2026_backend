@@ -9,7 +9,7 @@
 import { v2 as cloudinary } from 'cloudinary';
 import { loadConfig } from '../config/env.js';
 import { createDataError } from '../errors/DataError.js';
-import type { StorageAdapter, StorageService, UploadResult } from './storage.interface.js';
+import type { StorageAdapter, UploadResult } from './storage.interface.js';
 
 let configured = false;
 
@@ -62,49 +62,3 @@ export const cloudinaryStorage: StorageAdapter = {
     });
   },
 };
-
-/**
- * Buffer-based implementation backing `POST /upload` (upload.routes.ts).
- *
- * Preserved as-is through the payments rebase — it predates the adapter above and
- * has a different storage shape ('auto' resource type, public URLs, addressed by
- * URL). The only change is that it now shares ensureConfigured() instead of
- * calling cloudinary.config() from process.env at import time, so both code paths
- * configure the shared Cloudinary singleton from one validated source.
- */
-class CloudinaryStorageService implements StorageService {
-  async uploadFile(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
-    ensureConfigured();
-    return new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'gateways2026',
-          public_id: fileName.split('.')[0],
-          resource_type: 'auto',
-        },
-        (error, result) => {
-          if (error) return reject(error);
-          if (!result) return reject(new Error('Upload failed'));
-          resolve(result.secure_url);
-        },
-      );
-
-      uploadStream.end(fileBuffer);
-    });
-  }
-
-  async deleteFile(fileUrl: string): Promise<void> {
-    ensureConfigured();
-    // Extract the public ID from the delivery URL.
-    const urlParts = fileUrl.split('/');
-    const filenameWithExtension = urlParts[urlParts.length - 1];
-    const filename = filenameWithExtension.split('.')[0];
-    const folder = urlParts[urlParts.length - 2];
-
-    const publicId = folder === 'upload' ? filename : `${folder}/${filename}`;
-
-    await cloudinary.uploader.destroy(publicId);
-  }
-}
-
-export const storageService: StorageService = new CloudinaryStorageService();

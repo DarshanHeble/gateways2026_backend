@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Standalone backend service for Gateways — our CS department's flagship fest website and companion mobile app.",
   "main": "dist/app.js",
+  "packageManager": "npm@10.9.2",
   "scripts": {
     "dev": "tsx watch src/app.ts",
     "dev:all": "tsx scripts/dev-with-db.ts",
@@ -39,7 +40,6 @@
     "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
     "@fastify/helmet": "^13.1.0",
-    "@fastify/multipart": "^10.1.0",
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",
