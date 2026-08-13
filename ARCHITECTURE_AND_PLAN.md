@@ -2,7 +2,7 @@
 
 > **Repository**: `gateways2026_backend`  
 > **Service**: Standalone Backend for Gateways Fest (Website & Mobile App)  
-> **Primary Tech Stack**: Fastify (Node.js/TypeScript) + MySQL (via Drizzle ORM) + Zod + Argon2id  
+> **Primary Tech Stack**: Fastify (Node.js/TypeScript) + MySQL (via Drizzle ORM) + Zod + bcryptjs  
 
 ---
 
@@ -11,7 +11,7 @@
 PARALLAX (`gateways2026_backend`) is a high-concurrency, security-first backend service. It replaces mock/localStorage data layers with a shared, persistent database for both the web platform and companion mobile app.
 
 ### **Core Systems**
-1. **Authentication & Identity**: Auth.js / Argon2id password hashing, secure session management, user profiles, character identities.
+1. **Authentication & Identity**: Auth.js / bcryptjs password hashing, secure session management, user profiles, character identities.
 2. **Fest Operations**: Events, schedule, capacity locking, waitlist promotion, team formation, QR check-in & attendance.
 3. **Progression & Gamification**: XP ledger (append-only), leaderboards, achievement grants.
 4. **Platform Operations**: Payment receipt verification, private S3 storage uploads, audience-targeted announcements, structured audit logging.

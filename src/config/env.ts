@@ -39,6 +39,20 @@ const envSchema = z.object({
 
   // CORS
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  /**
+   * Vercel project slug for the admin dashboard, e.g. `dashboard-inky-kappa-88`.
+   * Enables CORS for that project's preview deploys ONLY, and never in
+   * production. Leave unset to disable preview access entirely.
+   */
+  CORS_VERCEL_PROJECT: z.string().optional(),
+
+  /**
+   * The one-time entry-pass fee, in rupees. The backend does not record a
+   * per-payment amount (one global pass per user), so this is the amount every
+   * receipt represents. Configurable rather than hardcoded so a fee change is not
+   * a code change.
+   */
+  ENTRY_PASS_AMOUNT_INR: z.coerce.number().int().positive().default(250),
 
   // Storage / Mail optional
   SMTP_URL: z.string().optional(),
@@ -63,12 +77,28 @@ const envSchema = z.object({
   STORAGE_SECRET_KEY: z.string().optional(),
 
   // Google Sheets Integration (Storage Strategy: Sheets is the live source of truth)
-  GOOGLE_SERVICE_EMAIL: z.string().min(1, 'GOOGLE_SERVICE_EMAIL is required'),
-  GOOGLE_PRIVATE_KEY: z.string().min(1, 'GOOGLE_PRIVATE_KEY is required'),
-  SHEET_ID: z.string().min(1, 'SHEET_ID is required'),
+  GOOGLE_SERVICE_EMAIL: z.string().optional(),
+  GOOGLE_PRIVATE_KEY: z.string().optional(),
+  SHEET_ID: z.string().optional(),
 
   // Webhook shared secret — secures POST /api/webhook/sheet-update
-  SHEET_WEBHOOK_SECRET: z.string().min(16, 'SHEET_WEBHOOK_SECRET must be at least 16 characters'),
+  SHEET_WEBHOOK_SECRET: z.string().optional(),
+
+  // Cloudinary (payment receipt storage)
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
+
+  // Session
+  SESSION_MAX_AGE_DAYS: z.coerce.number().default(7),
+
+  // OTP
+  OTP_EXPIRY_MINUTES: z.coerce.number().default(15),
+
+  // Google OAuth (optional — required only if using OAuth sign-in)
+  OAUTH_GOOGLE_CLIENT_ID: z.string().optional(),
+  OAUTH_GOOGLE_CLIENT_SECRET: z.string().optional(),
+  OAUTH_CALLBACK_BASE_URL: z.string().url().optional(),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

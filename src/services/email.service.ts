@@ -125,23 +125,39 @@ class EmailService {
   }
 
   public async sendVerificationEmail(options: EmailVerificationOptions): Promise<{ success: boolean; provider: string }> {
-    const verifyUrl = options.verificationUrl || `${this.config.APP_BASE_URL}/api/v1/auth/verify-email?token=${options.verificationToken}`;
+    // Verification is a 6-digit OTP submitted via POST /api/v1/auth/verify-email —
+    // there is no GET link the user can click. This previously defaulted to a
+    // fabricated `?token=` URL against that POST-only route, so the "Verify Email"
+    // button 404'd for every user who clicked it.
+    //
+    // A button is rendered only when a caller supplies a real FRONTEND url (which
+    // is the frontend's own verification page, not an API endpoint). Otherwise the
+    // email leads with the code, which is the thing that actually works.
+    const verifyUrl = options.verificationUrl;
 
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-        <h2 style="color: #4f46e5;">Verify Your Email - PARALLAX Gateways 2026</h2>
-        <p>Thank you for registering! Please use the button below or copy the code to verify your email address.</p>
+    const ctaBlock = verifyUrl
+      ? `
+        <p>Thank you for registering! Use the button below, or enter the code manually.</p>
         <div style="margin: 24px 0; text-align: center;">
           <a href="${verifyUrl}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Verify Email</a>
         </div>
-        <p style="color: #666; font-size: 14px;">Or copy and paste this verification token:</p>
-        <code style="background-color: #f3f4f6; padding: 8px 12px; display: inline-block; border-radius: 4px; font-family: monospace;">${options.verificationToken}</code>
+        <p style="color: #666; font-size: 14px;">Or enter this verification code:</p>`
+      : `
+        <p>Thank you for registering! Enter this verification code to confirm your email address:</p>`;
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #4f46e5;">Verify Your Email - PARALLAX Gateways 2026</h2>${ctaBlock}
+        <code style="background-color: #f3f4f6; padding: 8px 12px; display: inline-block; border-radius: 4px; font-family: monospace; font-size: 20px; letter-spacing: 3px;">${options.verificationToken}</code>
+        <p style="color: #666; font-size: 14px;">This code expires in 15 minutes.</p>
         <hr style="margin-top: 30px; border: none; border-top: 1px solid #e0e0e0;" />
         <p style="color: #999; font-size: 12px;">If you did not request this, please ignore this email.</p>
       </div>
     `;
 
-    const text = `Verify your email for Gateways 2026 by visiting: ${verifyUrl} (Verification Token: ${options.verificationToken})`;
+    const text = verifyUrl
+      ? `Verify your email for Gateways 2026 at ${verifyUrl} — or enter this code: ${options.verificationToken} (expires in 15 minutes).`
+      : `Your Gateways 2026 verification code is ${options.verificationToken} (expires in 15 minutes).`;
 
     return this.sendEmail({
       to: options.to,
