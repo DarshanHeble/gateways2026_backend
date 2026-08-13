@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { loadConfig } from './config/env.js';
 import { registerPlugins } from './plugins/security.js';
 import { registerSwagger } from './plugins/swagger.js';
+import { eventsRoutes } from './routes/events.routes.js';
 
 export async function buildApp() {
   const config = loadConfig();
@@ -19,6 +20,9 @@ export async function buildApp() {
 
   // Register security plugins
   await registerPlugins(app, config);
+
+  // Register domain routes
+  await app.register(eventsRoutes, { prefix: '/api' });
 
   // Health check endpoint
   app.get('/health', {

@@ -96,11 +96,25 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
       return;
     }
 
+    // Handle standard Fastify HTTP errors (e.g. 415 Unsupported Media Type)
+    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+      reply.status(error.statusCode).send({
+        error: {
+          code: 'BAD_REQUEST',
+          message: error.message,
+          statusCode: error.statusCode,
+          retryable: false,
+          correlationId,
+        },
+      });
+      return;
+    }
+
     // Log unhandled infrastructure / internal errors silently server-side
     app.log.error({ err: error, correlationId }, 'Unhandled server error');
 
     // Return safe public error response
-    const internalErr = createDataError('INTERNAL_ERROR', 'An unexpected error occurred.', correlationId);
+    const internalErr = createDataError('INTERNAL_ERROR', error.message || 'An unexpected error occurred.', correlationId);
     reply.status(500).send({
       error: {
         code: internalErr.code,
@@ -108,6 +122,7 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
         statusCode: 500,
         retryable: false,
         correlationId,
+        details: error.stack,
       },
     });
   });

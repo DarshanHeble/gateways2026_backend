@@ -61,6 +61,14 @@ const envSchema = z.object({
   STORAGE_BUCKET_URL: z.string().optional(),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
+
+  // Google Sheets Integration (Storage Strategy: Sheets is the live source of truth)
+  GOOGLE_SERVICE_EMAIL: z.string().min(1, 'GOOGLE_SERVICE_EMAIL is required'),
+  GOOGLE_PRIVATE_KEY: z.string().min(1, 'GOOGLE_PRIVATE_KEY is required'),
+  SHEET_ID: z.string().min(1, 'SHEET_ID is required'),
+
+  // Webhook shared secret — secures POST /api/webhook/sheet-update
+  SHEET_WEBHOOK_SECRET: z.string().min(16, 'SHEET_WEBHOOK_SECRET must be at least 16 characters'),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
