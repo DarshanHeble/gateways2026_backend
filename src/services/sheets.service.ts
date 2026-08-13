@@ -18,6 +18,10 @@ function getSheetClient(): GoogleSpreadsheet {
 
   const config = loadConfig();
 
+  if (!config.GOOGLE_SERVICE_EMAIL || !config.GOOGLE_PRIVATE_KEY || !config.SHEET_ID) {
+    throw createDataError('STORAGE_UNAVAILABLE', 'Google Sheets configuration missing.');
+  }
+
   const auth = new JWT({
     email: config.GOOGLE_SERVICE_EMAIL,
     // Fix for newline encoding issues when storing PEM keys in .env files.
@@ -52,7 +56,7 @@ export async function fetchEventsFromSheet(): Promise<Record<string, unknown>[]>
 
     // row.toObject() converts each row into a plain { header: value } object
     // based on the sheet's first-row column headers.
-    return rows.map((row) => row.toObject() as Record<string, unknown>);
+    return rows.map((row: any) => row.toObject() as Record<string, unknown>);
   } catch (err: unknown) {
     // Re-throw known DataErrors directly (defensive — shouldn't occur here).
     if (err && typeof err === 'object' && 'code' in err && (err as any).name === 'DataError') {

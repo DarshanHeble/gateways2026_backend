@@ -107,7 +107,7 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
     reply.header('x-correlation-id', correlationId);
   });
 
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: any, request, reply) => {
     const correlationId = (request.headers['x-correlation-id'] as string) || 'N/A';
 
     // Handle known DataError instances
@@ -126,12 +126,12 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
     }
 
     // Handle Fastify schema validation errors
-    if ((error as any).validation) {
+    if (error.validation) {
       const validationError = createDataError(
         'VALIDATION_FAILED',
         'Request input schema validation failed',
         correlationId,
-        { validation: (error as any).validation }
+        { validation: error.validation }
       );
       reply.status(400).send({
         error: {
@@ -164,7 +164,7 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
     app.log.error({ err: error, correlationId }, 'Unhandled server error');
 
     // Return safe public error response
-    const internalErr = createDataError('INTERNAL_ERROR', error.message || 'An unexpected error occurred.', correlationId);
+    const internalErr = createDataError('INTERNAL_ERROR', error?.message || 'An unexpected error occurred.', correlationId);
     reply.status(500).send({
       error: {
         code: internalErr.code,
@@ -172,7 +172,7 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
         statusCode: 500,
         retryable: false,
         correlationId,
-        details: error.stack,
+        details: error?.stack,
       },
     });
   });
