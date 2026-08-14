@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1785740399374,
+      "tag": "0000_ambiguous_sauron",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1786000275060,
+      "tag": "0001_wooden_vapor",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786010000000,
+      "tag": "0002_role_console_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786011000000,
+      "tag": "0003_default_characters",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786688971389,
+      "tag": "0004_repair_event_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786689830849,
+      "tag": "0005_repair_events_category_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786690466067,
+      "tag": "0006_repair_legacy_events_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786691530372,
+      "tag": "0007_repair_schedule_slots",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# Node.js dependencies
+node_modules/
+
+# TypeScript build output
+dist/
+
+# Environment variables & secrets
+.env*
+!.env.example
+!.env.*.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+*.log
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Temporary test / coverage output
+coverage/
+.nyc_output/
+
+# Project-specific ignored files
+docs/
+*.pdf
+HANDOVER.md
+MEMORY.md
+
+# Subagent-driven-development scratch workspace
+.superpowers/

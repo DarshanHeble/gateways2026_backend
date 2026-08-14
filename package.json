@@ -1,0 +1,71 @@
+{
+  "name": "gateways2026_backend",
+  "version": "1.0.0",
+  "description": "Standalone backend service for Gateways — our CS department's flagship fest website and companion mobile app.",
+  "main": "dist/app.js",
+  "packageManager": "npm@10.9.2",
+  "scripts": {
+    "dev": "tsx watch src/app.ts",
+    "dev:all": "tsx scripts/dev-with-db.ts",
+    "dev:preprod": "NODE_ENV=preproduction tsx watch src/app.ts",
+    "dev:prod": "NODE_ENV=production tsx watch src/app.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:push:preprod": "NODE_ENV=preproduction drizzle-kit push",
+    "db:push:prod": "NODE_ENV=production drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx src/db/seed.ts",
+    "role:grant": "tsx scripts/grant-role.ts",
+    "db:up": "docker compose up -d mysql",
+    "db:down": "docker compose stop mysql",
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "start:preprod": "NODE_ENV=preproduction node dist/app.js",
+    "start:prod": "NODE_ENV=production node dist/app.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DarshanHeble/gateways2026_backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/DarshanHeble/gateways2026_backend/issues"
+  },
+  "homepage": "https://github.com/DarshanHeble/gateways2026_backend#readme",
+  "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.1.0",
+    "@fastify/rate-limit": "^11.2.0",
+    "@fastify/swagger": "^9.8.1",
+    "@fastify/swagger-ui": "^6.1.1",
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.10.0",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.11.0",
+    "fastify-type-provider-zod": "^7.0.0",
+    "google-auth-library": "^11.0.0",
+    "google-spreadsheet": "^5.3.0",
+    "json-schema-to-ts": "^3.1.1",
+    "mysql2": "^3.23.2",
+    "nodemailer": "^9.0.3",
+    "uuid": "^14.0.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^26.1.2",
+    "@types/nodemailer": "^8.0.1",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.23.4",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
