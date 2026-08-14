@@ -81,10 +81,11 @@ export const sessions = mysqlTable('sessions', {
   expires: timestamp('expires', { fsp: 3 }).notNull(),
 });
 
-// ─── Verification Tokens (Email OTP) ─────────────────────────────────────────
-// Stores bcrypt-hashed OTPs for email verification (manual signup only).
-// identifier = email address; purpose = 'EMAIL_VERIFICATION'
-// Row is deleted atomically after successful OTP verification.
+// ─── Verification Tokens (Email OTP + Password Reset) ─────────────────────────
+// Stores bcrypt-hashed OTPs for email verification and SHA-256 digests for
+// password reset links. `purpose` separates the two flows.
+// identifier = email address; purpose = 'EMAIL_VERIFICATION' | 'PASSWORD_RESET'
+// Rows are consumed after successful verification/reset.
 export const verificationTokens = mysqlTable(
   'verification_tokens',
   {

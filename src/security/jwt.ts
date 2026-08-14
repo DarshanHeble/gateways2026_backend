@@ -5,6 +5,9 @@
  *   - generateSessionToken()  → 64-char hex opaque token (goes in httpOnly cookie)
  *   - hashSessionToken()      → SHA-256 hash of token (stored in DB `sessions.session_token`)
  *   Security: even if the DB is leaked, active sessions are not compromised.
+ * Password reset tokens:
+ *   - generatePasswordResetToken() → 64-char hex opaque token (emailed once)
+ *   - hashPasswordResetToken()     → SHA-256 hash stored in `verification_tokens`
  *
  * OTP (email verification):
  *   - generateOtp()           → 6-digit numeric OTP string
@@ -35,6 +38,21 @@ export function generateSessionToken(): string {
  * Lookup: hash the cookie value → query sessions.session_token.
  */
 export function hashSessionToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+// ─── Password Reset Token ─────────────────────────────────────────────────────
+
+/**
+ * Generate a cryptographically random, single-use password reset token.
+ * The raw value is sent only in the reset link; the database stores its hash.
+ */
+export function generatePasswordResetToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+/** Hash a raw password reset token for lookup in `verification_tokens`. */
+export function hashPasswordResetToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 

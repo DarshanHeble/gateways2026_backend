@@ -22,7 +22,15 @@ import { getAppDb, getWriterDb } from '../db/index.js';
 import { GOOGLE_CALLBACK_PATH } from '../config/routes.js';
 import { createDataError } from '../errors/DataError.js';
 import { hashPassword, verifyPassword } from '../security/password.js';
-import { generateOtp, generateSessionToken, hashOtp, hashSessionToken, verifyOtp } from '../security/jwt.js';
+import {
+  generateOtp,
+  generatePasswordResetToken,
+  generateSessionToken,
+  hashOtp,
+  hashPasswordResetToken,
+  hashSessionToken,
+  verifyOtp,
+} from '../security/jwt.js';
 import {
   consumeVerificationToken,
   createSession,
@@ -34,9 +42,11 @@ import {
   findUserById,
   findUserWithHashByEmail,
   findVerificationToken,
+  findVerificationTokenByToken,
   markEmailVerified,
   updatePassword,
   upsertVerificationToken,
+  consumeVerificationTokenByToken,
 } from '../repositories/auth.repository.js';
 import { getUserRoleAssignments } from '../repositories/user-roles.repository.js';
 import { consumeHandoffCode, createHandoffCode } from '../repositories/console-handoffs.repository.js';
@@ -49,11 +59,15 @@ import {
   type AuthTransport,
 } from '../plugins/jwt-auth.js';
 import { loadConfig, type AppConfig } from '../config/env.js';
+import { withTransaction } from '../db/transaction.js';
 
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CSRF_COOKIE_NAME = 'csrf_token';
 const OAUTH_STATE_COOKIE_NAME = 'oauth_state';
 const OAUTH_RETURN_TO_COOKIE_NAME = 'oauth_return_to';
+const PASSWORD_RESET_PURPOSE = 'PASSWORD_RESET';
+const PASSWORD_RESET_GENERIC_MESSAGE =
+  'If an account exists for that email, we sent a password reset link.';
 
 /**
  * Build the Google OAuth redirect URI.
@@ -245,6 +259,107 @@ export async function resendVerificationCode(
   return {
     message: 'If that account is awaiting verification, a new code has been sent.',
   };
+}
+
+// ─── Password Reset ----------------------------------------------------------
+
+/**
+ * Request a password reset without revealing whether an email is registered.
+ * Only password-backed, active, already-verified accounts receive a link. OAuth
+ * accounts continue to use Google sign-in and cannot be converted into a
+ * password account through this public recovery endpoint.
+ */
+export async function requestPasswordReset(
+  emailInput: string,
+  config: AppConfig = loadConfig(),
+): Promise<{ message: string }> {
+  const email = emailInput.toLowerCase().trim();
+  const db = getWriterDb();
+  const user = await findUserWithHashByEmail(db, email);
+
+  if (
+    user?.passwordHash &&
+    user.status !== 'BANNED' &&
+    user.status !== 'INACTIVE' &&
+    user.emailVerified
+  ) {
+    const rawToken = generatePasswordResetToken();
+    const hashedToken = hashPasswordResetToken(rawToken);
+    const expires = new Date(Date.now() + config.PASSWORD_RESET_EXPIRY_MINUTES * 60 * 1000);
+
+    await upsertVerificationToken(db, {
+      identifier: user.email,
+      hashedOtp: hashedToken,
+      expires,
+      purpose: PASSWORD_RESET_PURPOSE,
+    });
+
+    const resetUrl = `${config.FRONTEND_BASE_URL.replace(/\/$/, '')}/reset-password?token=${encodeURIComponent(rawToken)}`;
+    try {
+      await emailService.sendPasswordResetEmail({
+        to: user.email,
+        resetUrl,
+        expiryMinutes: config.PASSWORD_RESET_EXPIRY_MINUTES,
+      });
+    } catch (error) {
+      // Keep the response identical to the unknown-email case. The token is
+      // intentionally left replaceable through another request.
+      console.error(
+        'Password reset email delivery failed:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  return { message: PASSWORD_RESET_GENERIC_MESSAGE };
+}
+
+/**
+ * Consume a valid reset link and rotate the user's password and all sessions
+ * in one transaction. The token row is locked before it is consumed, so two
+ * concurrent requests cannot successfully reuse the same link.
+ */
+export async function resetPassword(
+  rawToken: string,
+  newPassword: string,
+): Promise<{ message: string }> {
+  const invalidError = createDataError(
+    'INVALID_CREDENTIALS',
+    'This password reset link is invalid or expired.',
+  );
+  const hashedToken = hashPasswordResetToken(rawToken);
+
+  const succeeded = await withTransaction(getWriterDb(), async (tx) => {
+    const tokenRow = await findVerificationTokenByToken(
+      tx,
+      hashedToken,
+      PASSWORD_RESET_PURPOSE,
+    );
+
+    if (!tokenRow) return false;
+
+    const expires =
+      typeof tokenRow.expires === 'string' ? new Date(tokenRow.expires) : tokenRow.expires;
+    const user = await findUserWithHashByEmail(tx, tokenRow.identifier);
+
+    if (
+      Date.now() > expires.getTime() ||
+      !user?.passwordHash ||
+      user.status === 'BANNED' ||
+      user.status === 'INACTIVE'
+    ) {
+      await consumeVerificationTokenByToken(tx, hashedToken, PASSWORD_RESET_PURPOSE);
+      return false;
+    }
+
+    await consumeVerificationTokenByToken(tx, hashedToken, PASSWORD_RESET_PURPOSE);
+    await updatePassword(tx, user.id, await hashPassword(newPassword));
+    await deleteSessionsForUser(tx, user.id);
+    return true;
+  });
+
+  if (!succeeded) throw invalidError;
+  return { message: 'Password reset successfully. You can now sign in.' };
 }
 
 // ─── 2. Verify Email (OTP) ───────────────────────────────────────────────────

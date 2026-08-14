@@ -9,7 +9,7 @@
  *   - findUserByEmail / findUserById NEVER return passwordHash to callers.
  *     Internal helpers that need the hash are separate (findUserWithHashByEmail).
  *   - Sessions store the SHA-256 hash of the raw token — not the raw token itself.
- *   - OTPs are stored as bcrypt hashes — never as plaintext.
+ *   - OTPs and reset tokens are stored as one-way hashes — never plaintext.
  */
 
 import { and, eq, lt, sql } from 'drizzle-orm';
@@ -334,6 +334,30 @@ export async function findVerificationToken(
 }
 
 /**
+ * Find a token by its stored digest. Password-reset callers use a random
+ * SHA-256 digest here; the raw token is never sent to the database.
+ */
+export async function findVerificationTokenByToken(
+  db: Db,
+  hashedToken: string,
+  purpose: string,
+): Promise<schema.VerificationToken | null> {
+  const rows = await db
+    .select()
+    .from(verificationTokens)
+    .where(
+      and(
+        eq(verificationTokens.token, hashedToken),
+        eq(verificationTokens.purpose, purpose),
+      ),
+    )
+    .for('update')
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
+/**
  * Delete (consume) a verification token row after successful OTP verification.
  * Call this AFTER the OTP has been verified — part of the atomic verify step.
  */
@@ -347,6 +371,22 @@ export async function consumeVerificationToken(
     .where(
       and(
         eq(verificationTokens.identifier, identifier),
+        eq(verificationTokens.purpose, purpose),
+      ),
+    );
+}
+
+/** Consume exactly one token identified by its stored digest. */
+export async function consumeVerificationTokenByToken(
+  db: Db,
+  hashedToken: string,
+  purpose: string,
+): Promise<void> {
+  await db
+    .delete(verificationTokens)
+    .where(
+      and(
+        eq(verificationTokens.token, hashedToken),
         eq(verificationTokens.purpose, purpose),
       ),
     );
