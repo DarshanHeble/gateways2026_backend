@@ -80,6 +80,7 @@ const EXPECTED_PATHS = [
   '/api/v1/admin/events',
   '/api/v1/admin/participants',
   '/api/v1/admin/participants/{id}',
+  '/api/v1/admin/participants/{id}/erase',
   '/api/v1/admin/registrations',
   '/api/v1/admin/registrations/{id}',
   '/api/v1/admin/registrations/{id}/payment-override',

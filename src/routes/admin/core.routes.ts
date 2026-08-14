@@ -24,6 +24,7 @@ import { getRegistration, listRegistrations } from '../../repositories/registrat
 import { getTeam, listTeamMembers } from '../../repositories/teams.repository.js';
 import { withTransaction } from '../../db/transaction.js';
 import { cancelRegistration, registerParticipant, setRegistrationStatus } from '../../services/registration.service.js';
+import { eraseParticipantPersonalData } from '../../services/privacy.service.js';
 
 const ErrorResponseSchema = z.object({
   error: z.object({
@@ -61,6 +62,9 @@ const ProfilePatchBody = z.object({
   emergencyPhone: z.string().max(32).nullable().optional(),
   dietaryPref: z.enum(['veg', 'non_veg', 'vegan', 'jain']).nullable().optional(),
   bio: z.string().max(5000).nullable().optional(),
+});
+const ParticipantEraseBody = z.object({
+  reason: z.string().trim().min(3).max(1000).optional(),
 });
 
 function iso(value: Date | string | null | undefined): string | null {
@@ -284,6 +288,49 @@ export async function registerAdminCoreRoutes(app: FastifyInstance, config: AppC
     if (!profile) throw createDataError('NOT_FOUND', 'Participant not found.');
     return serializeProfile(profile);
   });
+
+  router.post(
+    '/participants/:id/erase',
+    {
+      schema: {
+        params: z.object({ id: z.string().min(1).max(36) }),
+        body: ParticipantEraseBody,
+        response: {
+          200: z.object({
+            message: z.string(),
+            alreadyErased: z.boolean(),
+            receiptCount: z.number().int().nonnegative(),
+          }),
+          400: ErrorResponseSchema,
+          401: ErrorResponseSchema,
+          403: ErrorResponseSchema,
+          404: ErrorResponseSchema,
+          503: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request) => {
+      assertAuthenticated(request);
+      await assertAdmin(request);
+      const participantId = (request.params as { id: string }).id;
+      const result = await eraseParticipantPersonalData(getWriterDb(), {
+        participantId,
+        actorUserId: request.user.id,
+        reason: request.body.reason,
+        correlationId: typeof request.headers['x-correlation-id'] === 'string'
+          ? request.headers['x-correlation-id']
+          : null,
+      });
+
+      return {
+        message: result.alreadyErased
+          ? 'Participant personal data was already erased.'
+          : 'Participant personal data erased successfully.',
+        alreadyErased: result.alreadyErased,
+        receiptCount: result.receiptCount,
+      };
+    },
+  );
 
   router.get('/registrations', { schema: { querystring: ScopeQuery.extend({ search: z.string().optional(), status: z.string().optional() }) } }, async (request) => {
     const { ids } = await resolveScope(request, request.query.eventId);

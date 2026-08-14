@@ -289,6 +289,9 @@ export async function getPaymentForAdmin(id: string): Promise<ReceiptWithEmails>
 export async function getReceiptDownloadUrl(id: string): Promise<{ url: string }> {
   const receipt = await getReceiptById(getAppDb(), id);
   if (!receipt) throw createDataError('NOT_FOUND', 'Payment receipt not found.');
+  if (receipt.cloudinaryPublicId.startsWith('erased-')) {
+    throw createDataError('NOT_FOUND', 'This receipt file has been erased.');
+  }
   return { url: cloudinaryStorage.createSignedDownloadUrl(receipt.cloudinaryPublicId) };
 }
 
