@@ -99,7 +99,26 @@ export const ResendVerificationBodySchema = z.object({
   email: z.string().email('Must be a valid email address.'),
 });
 
+export const ForgotPasswordBodySchema = z.object({
+  email: z.string().email('Must be a valid email address.').max(255),
+});
+
+export const ResetPasswordBodySchema = z.object({
+  token: z
+    .string()
+    .length(64, 'Reset token is invalid.')
+    .regex(/^[a-f0-9]+$/i, 'Reset token is invalid.'),
+  newPassword: z
+    .string()
+    .min(8, 'Password must be at least 8 characters.')
+    .max(72, 'Password must not exceed 72 characters.'),
+});
+
 export const ResendVerificationResponseSchema = z.object({
+  message: z.string(),
+});
+
+export const PasswordResetResponseSchema = z.object({
   message: z.string(),
 });
 

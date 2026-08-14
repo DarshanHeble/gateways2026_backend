@@ -124,6 +124,7 @@ const envSchema = z.object({
 
   // OTP
   OTP_EXPIRY_MINUTES: z.coerce.number().default(15),
+  PASSWORD_RESET_EXPIRY_MINUTES: z.coerce.number().int().positive().default(30),
 
   // Google OAuth (optional — required only if using OAuth sign-in)
   OAUTH_GOOGLE_CLIENT_ID: z.string().optional(),

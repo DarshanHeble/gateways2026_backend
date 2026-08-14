@@ -16,6 +16,12 @@ export interface EmailVerificationOptions {
   verificationUrl?: string;
 }
 
+export interface PasswordResetEmailOptions {
+  to: string;
+  resetUrl: string;
+  expiryMinutes: number;
+}
+
 /**
  * Open an SMTP socket using an IPv4 address resolved from the configured host.
  *
@@ -227,6 +233,30 @@ class EmailService {
     return this.sendEmail({
       to: options.to,
       subject: 'Verify your email for Gateways 2026',
+      html,
+      text,
+    });
+  }
+
+  public async sendPasswordResetEmail(
+    options: PasswordResetEmailOptions,
+  ): Promise<{ success: boolean; provider: string }> {
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+        <h2 style="color: #4f46e5;">Reset your Gateways 2026 password</h2>
+        <p>We received a request to reset the password for your account.</p>
+        <div style="margin: 24px 0; text-align: center;">
+          <a href="${options.resetUrl}" style="background-color: #4f46e5; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Reset Password</a>
+        </div>
+        <p style="color: #666; font-size: 14px;">This link expires in ${options.expiryMinutes} minutes and can be used only once.</p>
+        <p style="color: #999; font-size: 12px;">If you did not request this, you can safely ignore this email.</p>
+      </div>
+    `;
+    const text = `Reset your Gateways 2026 password: ${options.resetUrl}\n\nThis link expires in ${options.expiryMinutes} minutes and can be used only once. If you did not request this, ignore this email.`;
+
+    return this.sendEmail({
+      to: options.to,
+      subject: 'Reset your Gateways 2026 password',
       html,
       text,
     });

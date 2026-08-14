@@ -37,6 +37,8 @@ export const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([
   `${API_V1_PREFIX}/auth/resend-verification`,
   `${API_V1_PREFIX}/auth/verify-email`,
   `${API_V1_PREFIX}/auth/signin`,
+  `${API_V1_PREFIX}/auth/forgot-password`,
+  `${API_V1_PREFIX}/auth/reset-password`,
   `${API_V1_PREFIX}/auth/callback/google`,
   `${API_V1_PREFIX}/auth/console-handoff/exchange`,
   `${ADMIN_PREFIX}/auth/signin`,

@@ -6,6 +6,8 @@
  *
  * Endpoints:
  *   POST   /auth/signup               — manual registration (no session)
+ *   POST   /auth/forgot-password      — email a single-use reset link
+ *   POST   /auth/reset-password       — consume reset link and set password
  *   POST   /auth/verify-email         — OTP verification → issues session
  *   POST   /auth/signin               — password login → issues session
  *   POST   /auth/signout              — revoke session + clear cookies  [auth required]
@@ -17,8 +19,8 @@
  * IDOR invariant: userId is ALWAYS derived from request.user (session-validated),
  * never from request body or query params.
  *
- * CSRF: /signup and /signin are exempt (no session yet).
- *       All other POST endpoints require X-CSRF-Token header (enforced in security.ts).
+ * CSRF: signup, signin, forgot-password, and reset-password are exempt (no
+ * session is required). All other POST endpoints require X-CSRF-Token header.
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -30,6 +32,8 @@ import {
   changePassword,
   createConsoleHandoff,
   exchangeConsoleHandoff,
+  requestPasswordReset,
+  resetPassword,
   getSession,
   handleGoogleCallback,
   initiateGoogleOAuth,
@@ -58,6 +62,9 @@ import {
   ChangePasswordBodySchema,
   ConsoleExchangeBodySchema,
   ConsoleHandoffBodySchema,
+  ForgotPasswordBodySchema,
+  PasswordResetResponseSchema,
+  ResetPasswordBodySchema,
   SessionResponseSchema,
   ResendVerificationBodySchema,
   ResendVerificationResponseSchema,
@@ -128,6 +135,46 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       },
     },
     async (request) => resendVerificationCode(request.body.email, config),
+  );
+
+  // ── POST /auth/forgot-password ───────────────────────────────────────────
+  router.post(
+    '/forgot-password',
+    {
+      config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+      schema: {
+        tags: ['Authentication'],
+        summary: 'Request a password reset link',
+        description:
+          'Always returns the same response whether or not the email exists. ' +
+          'A valid, single-use link is sent only for active password-backed accounts.',
+        body: ForgotPasswordBodySchema,
+        response: {
+          200: PasswordResetResponseSchema,
+          400: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request) => requestPasswordReset(request.body.email, config),
+  );
+
+  // ── POST /auth/reset-password ────────────────────────────────────────────
+  router.post(
+    '/reset-password',
+    {
+      config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
+      schema: {
+        tags: ['Authentication'],
+        summary: 'Set a new password from a reset link',
+        body: ResetPasswordBodySchema,
+        response: {
+          200: PasswordResetResponseSchema,
+          400: ErrorResponseSchema,
+          401: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request) => resetPassword(request.body.token, request.body.newPassword),
   );
 
   // ── POST /auth/verify-email ───────────────────────────────────────────────
