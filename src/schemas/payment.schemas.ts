@@ -14,6 +14,8 @@ export const SubmitReceiptBodySchema = z.object({
     .int()
     .positive()
     .max(5_000_000, 'File must not exceed 5MB.'),
+  paymentMethod: z.enum(['upi', 'neft', 'gateway']),
+  transactionReference: z.string().trim().min(4).max(128),
 });
 
 export const ReviewReceiptBodySchema = z
@@ -41,6 +43,9 @@ export const PaymentReceiptResponseSchema = z.object({
   reviewedBy: z.string().nullable(),
   reviewedAt: z.string().nullable(),
   rejectionReason: z.string().nullable(),
+  amountInr: z.number(),
+  paymentMethod: z.enum(['upi', 'neft', 'gateway']).nullable(),
+  transactionReference: z.string().nullable(),
 });
 
 export const PaymentReceiptOrNullResponseSchema = PaymentReceiptResponseSchema.nullable();

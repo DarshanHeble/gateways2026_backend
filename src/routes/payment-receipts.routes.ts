@@ -32,6 +32,7 @@ import {
   SubmitReceiptBodySchema,
 } from '../schemas/payment.schemas.js';
 import type { PaymentReceipt } from '../db/schema/payments.js';
+import { loadConfig } from '../config/env.js';
 
 const ErrorResponseSchema = z.object({
   error: z.object({
@@ -51,6 +52,14 @@ function serialize(receipt: PaymentReceipt) {
 
 export async function registerPaymentReceiptRoutes(app: FastifyInstance) {
   const router = app.withTypeProvider<ZodTypeProvider>();
+
+  router.get('/config', {
+    schema: {
+      tags: ['Payments'],
+      summary: 'Get the configured one-time entry-pass amount',
+      response: { 200: z.object({ amountInr: z.number().int().positive() }) },
+    },
+  }, async () => ({ amountInr: loadConfig().ENTRY_PASS_AMOUNT_INR }));
 
   router.post(
     '/',

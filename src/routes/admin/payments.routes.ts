@@ -21,6 +21,8 @@ import {
   reviewReceipt,
 } from '../../services/payment.service.js';
 import { ReviewReceiptBodySchema } from '../../schemas/payment.schemas.js';
+import { getAppDb } from '../../db/index.js';
+import { listRegistrationsForUsers } from '../../repositories/registrations.repository.js';
 
 const ErrorResponseSchema = z.object({
   error: z.object({
@@ -39,8 +41,8 @@ const AdminPaymentSchema = z.object({
   participantEmail: z.string(),
   amount: z.number(),
   breakdown: z.array(z.object({ label: z.string(), amount: z.number() })),
-  method: z.null(),
-  utr: z.null(),
+  method: z.enum(['upi', 'neft', 'gateway']).nullable(),
+  utr: z.string().nullable(),
   invoiceSerial: z.null(),
   receiptHash: z.null(),
   deskShiftId: z.null(),
@@ -58,6 +60,17 @@ const AdminPaymentSchema = z.object({
 
 export async function registerAdminPaymentRoutes(app: FastifyInstance, config: AppConfig) {
   const router = app.withTypeProvider<ZodTypeProvider>();
+
+  async function registrationIdsByUser(userIds: string[]) {
+    const rows = await listRegistrationsForUsers(getAppDb(), [...new Set(userIds)]);
+    const result = new Map<string, string[]>();
+    for (const row of rows) {
+      const ids = result.get(row.userId) ?? [];
+      ids.push(row.id);
+      result.set(row.userId, ids);
+    }
+    return result;
+  }
 
   router.get(
     '/',
@@ -90,9 +103,10 @@ export async function registerAdminPaymentRoutes(app: FastifyInstance, config: A
 
       const { status, participantId, limit, cursor } = request.query;
       const page = await listPaymentsForAdmin({ status, userId: participantId, limit, cursor });
+      const registrationIds = await registrationIdsByUser(page.items.map((item) => item.userId));
 
       return {
-        items: page.items.map((r) => serializeAdminPayment(r, config.ENTRY_PASS_AMOUNT_INR)),
+        items: page.items.map((r) => serializeAdminPayment(r, config.ENTRY_PASS_AMOUNT_INR, registrationIds.get(r.userId) ?? [])),
         nextCursor: page.nextCursor,
       };
     },
@@ -117,7 +131,8 @@ export async function registerAdminPaymentRoutes(app: FastifyInstance, config: A
       assertAuthenticated(request);
       await assertAdmin(request);
       const receipt = await getPaymentForAdmin(request.params.id);
-      return serializeAdminPayment(receipt, config.ENTRY_PASS_AMOUNT_INR);
+      const registrationIds = await registrationIdsByUser([receipt.userId]);
+      return serializeAdminPayment(receipt, config.ENTRY_PASS_AMOUNT_INR, registrationIds.get(receipt.userId) ?? []);
     },
   );
 
@@ -173,7 +188,8 @@ export async function registerAdminPaymentRoutes(app: FastifyInstance, config: A
       await reviewReceipt(request.params.id, request.user.id, request.body);
       // Re-read so the response carries the joined participant/reviewer emails.
       const receipt = await getPaymentForAdmin(request.params.id);
-      return serializeAdminPayment(receipt, config.ENTRY_PASS_AMOUNT_INR);
+      const registrationIds = await registrationIdsByUser([receipt.userId]);
+      return serializeAdminPayment(receipt, config.ENTRY_PASS_AMOUNT_INR, registrationIds.get(receipt.userId) ?? []);
     },
   );
 

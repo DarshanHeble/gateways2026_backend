@@ -9,7 +9,7 @@
  * conflict, Team Guide wins).
  */
 
-import { index, int, mysqlTable, text, timestamp, varchar } from 'drizzle-orm/mysql-core';
+import { index, int, mysqlTable, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/mysql-core';
 import { sql } from 'drizzle-orm';
 import { users } from './auth.js';
 
@@ -27,6 +27,9 @@ export const paymentReceipts = mysqlTable(
     fileUrl: text('file_url').notNull(),
     fileName: varchar('file_name', { length: 255 }).notNull(),
     fileSizeBytes: int('file_size_bytes').notNull(),
+    amountInr: int('amount_inr').notNull().default(250),
+    paymentMethod: varchar('payment_method', { length: 32 }),
+    transactionReference: varchar('transaction_reference', { length: 128 }),
     status: varchar('status', { length: 32 }).notNull().default('pending'),
     submittedAt: timestamp('submitted_at', { fsp: 3 })
       .notNull()
@@ -37,6 +40,9 @@ export const paymentReceipts = mysqlTable(
   },
   (table) => ({
     statusSubmittedIdx: index('payment_receipt_status_idx').on(table.status, table.submittedAt),
+    transactionReferenceIdx: uniqueIndex('payment_receipt_transaction_reference_unique').on(
+      table.transactionReference,
+    ),
   }),
 );
 

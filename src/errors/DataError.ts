@@ -8,12 +8,14 @@ export type DataErrorCode =
   | 'EVENT_FULL'
   | 'REGISTRATION_CLOSED'
   | 'TEAM_FULL'
+  | 'TEAM_LOCKED'
   | 'INVALID_JOIN_CODE'
   | 'STORAGE_UNAVAILABLE'
   | 'VALIDATION_FAILED'
   | 'RECEIPT_ALREADY_SUBMITTED'
   | 'PAYMENT_NOT_VERIFIED'
   | 'FORBIDDEN'
+  | 'MUST_CHANGE_PASSWORD'
   | 'INTERNAL_ERROR';
 
 export interface DataErrorDetails {
@@ -49,11 +51,13 @@ export const ERROR_MAPPINGS: Record<DataErrorCode, { statusCode: number; retryab
   NOT_AUTHENTICATED: { statusCode: 401, retryable: false },
   INVALID_CREDENTIALS: { statusCode: 401, retryable: false },
   FORBIDDEN: { statusCode: 403, retryable: false },
+  MUST_CHANGE_PASSWORD: { statusCode: 403, retryable: false },
   NOT_FOUND: { statusCode: 404, retryable: false },
   EMAIL_TAKEN: { statusCode: 409, retryable: false },
   PLAYER_NAME_TAKEN: { statusCode: 409, retryable: false },
   ALREADY_REGISTERED: { statusCode: 409, retryable: false },
   TEAM_FULL: { statusCode: 409, retryable: false },
+  TEAM_LOCKED: { statusCode: 409, retryable: false },
   INVALID_JOIN_CODE: { statusCode: 409, retryable: false },
   RECEIPT_ALREADY_SUBMITTED: { statusCode: 409, retryable: false },
   REGISTRATION_CLOSED: { statusCode: 422, retryable: false },
@@ -80,12 +84,14 @@ export function createDataError(
     EVENT_FULL: 'Event capacity reached.',
     REGISTRATION_CLOSED: 'Registration for this event is currently closed.',
     TEAM_FULL: 'Team has reached its maximum member limit.',
+    TEAM_LOCKED: 'This team is locked and cannot be changed.',
     INVALID_JOIN_CODE: 'Invalid or expired team join code.',
     STORAGE_UNAVAILABLE: 'Storage service is temporarily unavailable. Please try again.',
     VALIDATION_FAILED: 'Validation failed for request parameters.',
     RECEIPT_ALREADY_SUBMITTED: 'A payment receipt has already been submitted for your account.',
     PAYMENT_NOT_VERIFIED: 'Action requires a verified payment.',
     FORBIDDEN: 'You do not have permission to perform this action.',
+    MUST_CHANGE_PASSWORD: 'You must change your temporary password before continuing.',
     INTERNAL_ERROR: 'An internal server error occurred. Please try again later.',
   };
 

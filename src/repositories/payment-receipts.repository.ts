@@ -34,6 +34,9 @@ export async function createReceipt(
     fileUrl: string;
     fileName: string;
     fileSizeBytes: number;
+    amountInr?: number;
+    paymentMethod?: 'upi' | 'neft' | 'gateway';
+    transactionReference?: string;
   },
 ): Promise<void> {
   await db.insert(paymentReceipts).values({
@@ -43,6 +46,9 @@ export async function createReceipt(
     fileUrl: params.fileUrl,
     fileName: params.fileName,
     fileSizeBytes: params.fileSizeBytes,
+    amountInr: params.amountInr ?? 250,
+    paymentMethod: params.paymentMethod ?? null,
+    transactionReference: params.transactionReference ?? null,
     status: 'pending',
   });
 }

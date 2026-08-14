@@ -4,6 +4,34 @@ import path from 'path';
 
 import fs from 'fs';
 
+/**
+ * Parse boolean environment variables without the `Boolean("false")` trap.
+ *
+ * `z.coerce.boolean()` treats every non-empty string as true, so an env value
+ * of `SMTP_SECURE=false` previously enabled TLS immediately. Port 587 then
+ * received a TLS ClientHello before STARTTLS and Gmail returned "wrong version
+ * number".
+ */
+const booleanEnv = () =>
+  z.preprocess((value) => {
+    if (typeof value !== 'string') return value;
+
+    switch (value.trim().toLowerCase()) {
+      case 'true':
+      case '1':
+      case 'yes':
+      case 'on':
+        return true;
+      case 'false':
+      case '0':
+      case 'no':
+      case 'off':
+        return false;
+      default:
+        return value;
+    }
+  }, z.boolean().optional());
+
 // Determine environment file based on NODE_ENV
 const nodeEnv = process.env.NODE_ENV || 'development';
 const envFile = `.env.${nodeEnv}`;
@@ -21,6 +49,8 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   HOST: z.string().default('0.0.0.0'),
   APP_BASE_URL: z.string().url().default('http://localhost:4000'),
+  FRONTEND_BASE_URL: z.string().url().default('http://localhost:3000'),
+  REGISTRATION_CONSOLE_URL: z.string().url().default('http://localhost:3002'),
 
   // Individual DB connection variables
   DB_HOST: z.string().optional(),
@@ -60,7 +90,7 @@ const envSchema = z.object({
   SMTP_PORT: z.coerce.number().optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  SMTP_SECURE: z.coerce.boolean().optional(),
+  SMTP_SECURE: booleanEnv(),
   SMTP_FROM: z.string().optional(),
 
   // Fallback SMTP config
@@ -69,7 +99,7 @@ const envSchema = z.object({
   SMTP_FALLBACK_PORT: z.coerce.number().optional(),
   SMTP_FALLBACK_USER: z.string().optional(),
   SMTP_FALLBACK_PASS: z.string().optional(),
-  SMTP_FALLBACK_SECURE: z.coerce.boolean().optional(),
+  SMTP_FALLBACK_SECURE: booleanEnv(),
   SMTP_FALLBACK_FROM: z.string().optional(),
 
   STORAGE_BUCKET_URL: z.string().optional(),

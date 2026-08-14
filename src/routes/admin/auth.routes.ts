@@ -20,11 +20,12 @@ import { assertAuthenticated } from '../../plugins/jwt-auth.js';
 import { getUserRoles } from '../../repositories/user-roles.repository.js';
 import { getAppDb } from '../../db/index.js';
 import { createDataError } from '../../errors/DataError.js';
-import { UserRole } from '../../security/roles.js';
+import { assertStaff, UserRole } from '../../security/roles.js';
+import { getUserRoleAssignments } from '../../repositories/user-roles.repository.js';
 import {
   issueSessionFor,
   resolveRequestedTransport,
-  signout,
+  signoutEverywhere,
   verifyPasswordCredentials,
 } from '../../services/auth.service.js';
 import { SigninBodySchema, SigninResponseSchema } from '../../schemas/auth.schemas.js';
@@ -46,8 +47,9 @@ const AdminSessionResponseSchema = z.object({
     email: z.string(),
     status: z.string(),
     emailVerified: z.string().nullable(),
+    mustChangePassword: z.boolean(),
   }),
-  roles: z.array(z.string()),
+  roles: z.array(z.object({ role: z.string(), eventScopeId: z.string().nullable() })),
 });
 
 export async function registerAdminAuthRoutes(app: FastifyInstance, config: AppConfig) {
@@ -111,7 +113,8 @@ export async function registerAdminAuthRoutes(app: FastifyInstance, config: AppC
     },
     async (request) => {
       assertAuthenticated(request);
-      const roles = await getUserRoles(getAppDb(), request.user.id);
+      await assertStaff(request);
+      const roles = await getUserRoleAssignments(getAppDb(), request.user.id);
       return {
         user: {
           id: request.user.id,
@@ -123,8 +126,11 @@ export async function registerAdminAuthRoutes(app: FastifyInstance, config: AppC
               : typeof request.user.emailVerified === 'string'
                 ? request.user.emailVerified
                 : request.user.emailVerified.toISOString(),
+          mustChangePassword: request.user.mustChangePassword,
         },
-        roles,
+        roles: roles
+          .filter((assignment) => [UserRole.ADMIN, UserRole.ORGANIZER, UserRole.SCANNER].includes(assignment.role as any))
+          .map((assignment) => ({ role: assignment.role, eventScopeId: assignment.eventScopeId })),
       };
     },
   );
@@ -139,7 +145,7 @@ export async function registerAdminAuthRoutes(app: FastifyInstance, config: AppC
       },
     },
     async (request, reply) => {
-      await signout(request, reply);
+      await signoutEverywhere(request, reply);
       return reply.send({ message: 'Signed out.' });
     },
   );

@@ -1,3 +1,5 @@
+import dns from 'node:dns';
+import net from 'node:net';
 import nodemailer, { Transporter } from 'nodemailer';
 import { loadConfig, AppConfig } from '../config/env.js';
 
@@ -12,6 +14,66 @@ export interface EmailVerificationOptions {
   to: string;
   verificationToken: string;
   verificationUrl?: string;
+}
+
+/**
+ * Open an SMTP socket using an IPv4 address resolved from the configured host.
+ *
+ * Some machines advertise an IPv6 interface but have no usable IPv6 route. In
+ * that situation Nodemailer's normal dual-stack selection can choose an AAAA
+ * record and fail with `EHOSTUNREACH` before it ever tries Gmail's IPv4
+ * address. The socket still keeps the original hostname in the transport
+ * options, so STARTTLS/SNI uses `smtp.gmail.com`, not the numeric address.
+ */
+function getIpv4Socket(
+  options: { host?: string; port?: number; localAddress?: string },
+  callback: (error: Error | null, socketOptions: { connection: net.Socket } | false) => void,
+): void {
+  const host = options.host;
+  if (!host || net.isIP(host)) {
+    callback(null, false);
+    return;
+  }
+
+  dns.resolve4(host, (resolveError, addresses) => {
+    if (resolveError || !addresses.length) {
+      callback(resolveError ?? new Error(`No IPv4 address found for ${host}`), false);
+      return;
+    }
+
+    let addressIndex = 0;
+    let lastError: Error | null = null;
+
+    const connectNext = () => {
+      const address = addresses[addressIndex++];
+      if (!address) {
+        callback(lastError ?? new Error(`Could not connect to ${host} over IPv4`), false);
+        return;
+      }
+
+      const socket = net.connect({
+        host: address,
+        port: options.port ?? 587,
+        localAddress: options.localAddress,
+      });
+
+      const onError = (error: Error) => {
+        lastError = error;
+        socket.removeListener('connect', onConnect);
+        socket.destroy();
+        connectNext();
+      };
+      const onConnect = () => {
+        socket.removeListener('error', onError);
+        callback(null, { connection: socket });
+      };
+
+      socket.once('error', onError);
+      socket.once('connect', onConnect);
+    };
+
+    connectNext();
+  });
 }
 
 class EmailService {
@@ -38,11 +100,14 @@ class EmailService {
         return url;
       }
       if (host) {
+        const smtpPort = port || 587;
         return {
           host,
-          port: port || 587,
-          secure: secure ?? (port === 465),
+          port: smtpPort,
+          secure: secure ?? (smtpPort === 465),
           auth: user ? { user, pass } : undefined,
+          // Avoid unusable IPv6 routes while retaining the hostname for SNI.
+          getSocket: getIpv4Socket,
         };
       }
       return null;

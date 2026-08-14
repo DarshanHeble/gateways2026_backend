@@ -70,6 +70,7 @@ export function mapDatabaseError(err: any): DataError {
     if (msg.includes('source_idempotency_idx')) return createDataError('VALIDATION_FAILED', 'XP award already processed.');
     if (msg.includes('attendance_event_user_idx')) return createDataError('VALIDATION_FAILED', 'Attendance already recorded.');
     if (msg.includes('payment_receipts_user_id_unique')) return createDataError('RECEIPT_ALREADY_SUBMITTED');
+    if (msg.includes('payment_receipt_transaction_reference_unique')) return createDataError('VALIDATION_FAILED', 'That transaction reference has already been submitted.');
     return createDataError('VALIDATION_FAILED', 'Duplicate resource conflict.');
   }
 

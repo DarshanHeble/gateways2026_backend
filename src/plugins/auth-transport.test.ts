@@ -160,6 +160,8 @@ describe('auth transport — CSRF interaction', () => {
     fileData: 'data:application/pdf;base64,JVBERi0xLjQK',
     fileName: 'receipt.pdf',
     fileSizeBytes: 9,
+    paymentMethod: 'upi',
+    transactionReference: 'TEST-AUTH-TRANSPORT-001',
   };
 
   // ★ The cookie path must keep full CSRF enforcement.
