@@ -50,6 +50,13 @@
       "when": 1786690466067,
       "tag": "0006_repair_legacy_events_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786691530372,
+      "tag": "0007_repair_schedule_slots",
+      "breakpoints": true
     }
   ]
 }
