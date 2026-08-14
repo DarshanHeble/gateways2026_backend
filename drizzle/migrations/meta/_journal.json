@@ -15,6 +15,20 @@
       "when": 1786000275060,
       "tag": "0001_wooden_vapor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786010000000,
+      "tag": "0002_role_console_core",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786011000000,
+      "tag": "0003_default_characters",
+      "breakpoints": true
     }
   ]
 }

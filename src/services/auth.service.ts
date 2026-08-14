@@ -10,14 +10,15 @@
  *   - User existence is never revealed on login failure (returns INVALID_CREDENTIALS always).
  *   - BANNED / INACTIVE users receive FORBIDDEN (403), not INVALID_CREDENTIALS.
  *   - Email verification is required before password-login is allowed.
- *   - Google OAuth users are pre-verified by Google — OTP is skipped.
+ *   - Google OAuth users must complete the same app-owned email OTP flow as
+ *     password signups before a website session is issued.
  *   - Raw session token never touches the DB — only its SHA-256 hash.
  */
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { v7 as uuidv7 } from 'uuid';
 import crypto from 'node:crypto';
-import { getAppDb } from '../db/index.js';
+import { getAppDb, getWriterDb } from '../db/index.js';
 import { GOOGLE_CALLBACK_PATH } from '../config/routes.js';
 import { createDataError } from '../errors/DataError.js';
 import { hashPassword, verifyPassword } from '../security/password.js';
@@ -26,14 +27,19 @@ import {
   consumeVerificationToken,
   createSession,
   createUser,
+  deleteSessionsForUser,
   deleteSession,
   findOrCreateOAuthUser,
   findUserByEmail,
+  findUserById,
   findUserWithHashByEmail,
   findVerificationToken,
   markEmailVerified,
+  updatePassword,
   upsertVerificationToken,
 } from '../repositories/auth.repository.js';
+import { getUserRoleAssignments } from '../repositories/user-roles.repository.js';
+import { consumeHandoffCode, createHandoffCode } from '../repositories/console-handoffs.repository.js';
 import { emailService } from './email.service.js';
 import {
   assertAuthenticated,
@@ -42,11 +48,12 @@ import {
   BEARER_SESSION_MAX_AGE_MS,
   type AuthTransport,
 } from '../plugins/jwt-auth.js';
-import type { AppConfig } from '../config/env.js';
+import { loadConfig, type AppConfig } from '../config/env.js';
 
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CSRF_COOKIE_NAME = 'csrf_token';
 const OAUTH_STATE_COOKIE_NAME = 'oauth_state';
+const OAUTH_RETURN_TO_COOKIE_NAME = 'oauth_return_to';
 
 /**
  * Build the Google OAuth redirect URI.
@@ -59,7 +66,8 @@ const OAUTH_STATE_COOKIE_NAME = 'oauth_state';
  * not in CI.
  */
 function buildGoogleCallbackUrl(config: AppConfig): string {
-  return `${config.OAUTH_CALLBACK_BASE_URL ?? config.APP_BASE_URL}${GOOGLE_CALLBACK_PATH}`;
+  const callbackBase = config.OAUTH_CALLBACK_BASE_URL ?? config.FRONTEND_BASE_URL;
+  return `${callbackBase.replace(/\/$/, '')}${GOOGLE_CALLBACK_PATH}`;
 }
 
 // ─── Helper: Issue CSRF token cookie ─────────────────────────────────────────
@@ -131,16 +139,53 @@ async function createSessionAndIssueCredentials(
   return null;
 }
 
+// ─── Email Verification ------------------------------------------------------
+
+/**
+ * Create and deliver the one-time code used by both password and Google
+ * account flows. The token is stored before delivery so a transient SMTP
+ * failure can be recovered by requesting another code without recreating the
+ * account.
+ */
+async function sendVerificationCode(email: string, config: AppConfig): Promise<void> {
+  const otp = generateOtp();
+  const hashedOtp = await hashOtp(otp);
+  const otpExpires = new Date(Date.now() + config.OTP_EXPIRY_MINUTES * 60 * 1000);
+
+  await upsertVerificationToken(getAppDb(), {
+    identifier: email,
+    hashedOtp,
+    expires: otpExpires,
+    purpose: 'EMAIL_VERIFICATION',
+  });
+
+  try {
+    await emailService.sendVerificationEmail({
+      to: email,
+      verificationToken: otp,
+    });
+  } catch (error) {
+    // Do not leak SMTP details or the OTP to the browser. The token remains
+    // replaceable through resend-verification.
+    console.error('Verification email delivery failed:', error instanceof Error ? error.message : String(error));
+    throw createDataError(
+      'STORAGE_UNAVAILABLE',
+      'Your account was created, but the verification email could not be sent. Please request a new code.',
+    );
+  }
+}
+
 // ─── 1. Sign Up (Password) ───────────────────────────────────────────────────
 
 export interface SignupDto {
   email: string;
   password: string;
-  fullName: string;
+  username: string;
+  fullName?: string;
 }
 
 /**
- * Register a new user with email + password.
+ * Register a new user with email + password + unique character username.
  *
  * Flow:
  *  1. Normalize email → check for duplicate.
@@ -150,7 +195,10 @@ export interface SignupDto {
  *  5. Send OTP email.
  *  6. Return { message } — NO session yet. User must verify email first.
  */
-export async function signupWithPassword(dto: SignupDto): Promise<{ message: string }> {
+export async function signupWithPassword(
+  dto: SignupDto,
+  config: AppConfig = loadConfig(),
+): Promise<{ message: string }> {
   const db = getAppDb();
   const email = dto.email.toLowerCase().trim();
 
@@ -163,39 +211,39 @@ export async function signupWithPassword(dto: SignupDto): Promise<{ message: str
   const passwordHash = await hashPassword(dto.password);
   const userId = uuidv7();
 
-  await createUser(db, { id: userId, email, passwordHash });
-
-  // Generate OTP
-  const otp = generateOtp();
-  const hashedOtp = await hashOtp(otp);
-  const otpExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-
-  await upsertVerificationToken(db, {
-    identifier: email,
-    hashedOtp,
-    expires: otpExpires,
-    purpose: 'EMAIL_VERIFICATION',
+  await createUser(db, {
+    id: userId,
+    email,
+    passwordHash,
+    username: dto.username,
+    fullName: dto.fullName,
   });
 
-  // Send OTP via email (fire — if email fails, user can request resend later)
-  await emailService.sendEmail({
-    to: email,
-    subject: 'Gateways 2026 — Verify your email',
-    text: `Your verification code is: ${otp}\n\nThis code expires in 15 minutes.`,
-    html: `
-      <div style="font-family:sans-serif;max-width:480px;margin:auto">
-        <h2>Welcome to Gateways 2026!</h2>
-        <p>Your email verification code is:</p>
-        <p style="font-size:2rem;font-weight:bold;letter-spacing:0.25rem;color:#6366f1">${otp}</p>
-        <p>This code expires in <strong>15 minutes</strong>.</p>
-        <p style="color:#888;font-size:0.85rem">If you didn't create an account, ignore this email.</p>
-      </div>
-    `,
-  });
+  await sendVerificationCode(email, config);
 
   return {
     message:
       'Account created. A 6-digit verification code has been sent to your email. Please verify to complete registration.',
+  };
+}
+
+/**
+ * Issue a replacement code without revealing whether an email is registered.
+ * This is also the recovery path when an account was committed but SMTP was
+ * temporarily unavailable during the original signup request.
+ */
+export async function resendVerificationCode(
+  emailInput: string,
+  config: AppConfig = loadConfig(),
+): Promise<{ message: string }> {
+  const email = emailInput.toLowerCase().trim();
+  const user = await findUserByEmail(getAppDb(), email);
+  if (user) {
+    await sendVerificationCode(email, config);
+  }
+
+  return {
+    message: 'If that account is awaiting verification, a new code has been sent.',
   };
 }
 
@@ -381,6 +429,18 @@ export async function signout(request: FastifyRequest, reply: FastifyReply): Pro
   clearSessionCookie(reply);
 }
 
+/**
+ * Console logout is an explicit "sign out everywhere" action. The console
+ * bearer session and the website's cookie session belong to the same user, so
+ * revoking only the bearer would leave the website session alive and allow a
+ * fresh console handoff immediately afterward.
+ */
+export async function signoutEverywhere(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  assertAuthenticated(request);
+  await deleteSessionsForUser(getWriterDb(), request.user.id);
+  clearSessionCookie(reply);
+}
+
 // ─── 5. Get Current Session ───────────────────────────────────────────────────
 
 /**
@@ -392,9 +452,99 @@ export function getSession(request: FastifyRequest): {
   email: string;
   status: string;
   emailVerified: Date | string | null;
+  mustChangePassword: boolean;
 } {
   assertAuthenticated(request);
   return request.user;
+}
+
+export async function changePassword(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  config: AppConfig,
+  dto: { currentPassword: string; newPassword: string },
+): Promise<{ message: string; user: { id: string; email: string }; token?: string; expiresAt?: string }> {
+  assertAuthenticated(request);
+  const db = getAppDb();
+  const user = await findUserWithHashByEmail(db, request.user.email);
+  if (!user?.passwordHash || !(await verifyPassword(dto.currentPassword, user.passwordHash))) {
+    throw createDataError('INVALID_CREDENTIALS', 'Current password is incorrect.');
+  }
+
+  await updatePassword(db, request.user.id, await hashPassword(dto.newPassword));
+  await deleteSessionsForUser(db, request.user.id);
+  const credentials = await createSessionAndIssueCredentials(
+    request.user.id,
+    reply,
+    config,
+    request.authTransport ?? 'cookie',
+  );
+
+  return {
+    message: 'Password changed successfully.',
+    user: { id: request.user.id, email: request.user.email },
+    ...(credentials ?? {}),
+  };
+}
+
+export async function createConsoleHandoff(
+  request: FastifyRequest,
+  config: AppConfig,
+  returnTo = '/',
+): Promise<{ url: string; expiresAt: string }> {
+  assertAuthenticated(request);
+  if (request.user.mustChangePassword) {
+    throw createDataError('MUST_CHANGE_PASSWORD', 'Change the temporary password before opening the console.');
+  }
+  const assignments = await getUserRoleAssignments(getAppDb(), request.user.id);
+  if (!assignments.some((assignment) => ['ADMIN', 'ORGANIZER', 'SCANNER'].includes(assignment.role))) {
+    throw createDataError('FORBIDDEN', 'This account does not have console access.');
+  }
+
+  const code = await createHandoffCode(getAppDb(), { userId: request.user.id, returnTo });
+  const expiresAt = new Date(Date.now() + 90_000).toISOString();
+  const url = `${config.REGISTRATION_CONSOLE_URL.replace(/\/$/, '')}/auth/callback?code=${encodeURIComponent(code)}&returnTo=${encodeURIComponent(returnTo)}`;
+  return { url, expiresAt };
+}
+
+export async function exchangeConsoleHandoff(
+  code: string,
+  reply: FastifyReply,
+  config: AppConfig,
+): Promise<{
+  token: string;
+  expiresAt: string;
+  returnTo: string;
+  user: { id: string; email: string; status: string; mustChangePassword: boolean };
+  roles: Array<{ role: string; eventScopeId: string | null }>;
+}> {
+  const db = getAppDb();
+  const handoff = await consumeHandoffCode(db, code);
+  if (!handoff) throw createDataError('INVALID_CREDENTIALS', 'This console sign-in link is invalid or expired.');
+
+  const user = await findUserById(db, handoff.userId);
+  if (!user || user.mustChangePassword) {
+    throw createDataError('MUST_CHANGE_PASSWORD', 'The staff account must change its temporary password first.');
+  }
+  const roles = await getUserRoleAssignments(db, user.id);
+  if (!roles.some((assignment) => ['ADMIN', 'ORGANIZER', 'SCANNER'].includes(assignment.role))) {
+    throw createDataError('FORBIDDEN', 'This account no longer has console access.');
+  }
+  const credentials = await issueSessionFor(user.id, reply, config, 'bearer');
+  if (!credentials) throw createDataError('INTERNAL_ERROR', 'Could not create console session.');
+
+  return {
+    token: credentials.token,
+    expiresAt: credentials.expiresAt,
+    returnTo: handoff.returnTo,
+    user: {
+      id: user.id,
+      email: user.email,
+      status: user.status,
+      mustChangePassword: user.mustChangePassword,
+    },
+    roles: roles.map((assignment) => ({ role: assignment.role, eventScopeId: assignment.eventScopeId })),
+  };
 }
 
 // ─── 6. Google OAuth — Initiate ──────────────────────────────────────────────
@@ -406,7 +556,11 @@ const GOOGLE_SCOPES = 'openid email profile';
  * Build the Google OAuth2 authorization redirect URL.
  * Frontend should redirect the user to the returned URL.
  */
-export function initiateGoogleOAuth(config: AppConfig, reply: FastifyReply): { url: string } {
+export function initiateGoogleOAuth(
+  config: AppConfig,
+  reply: FastifyReply,
+  returnTo = '/travelling',
+): { url: string } {
   if (!config.OAUTH_GOOGLE_CLIENT_ID) {
     throw createDataError('INTERNAL_ERROR', 'Google OAuth is not configured on this server.');
   }
@@ -429,6 +583,14 @@ export function initiateGoogleOAuth(config: AppConfig, reply: FastifyReply): { u
     sameSite: 'lax',
     path: '/',
     maxAge: 10 * 60, // 10 minutes — an OAuth round-trip, not a session
+    signed: true,
+  });
+  reply.setCookie(OAUTH_RETURN_TO_COOKIE_NAME, returnTo, {
+    httpOnly: true,
+    secure: config.NODE_ENV !== 'development',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 10 * 60,
     signed: true,
   });
 
@@ -474,7 +636,8 @@ interface GoogleUserInfo {
  *  1. Exchange authorization code for Google tokens.
  *  2. Fetch Google userinfo (email, name, picture).
  *  3. find-or-create user + link OAuth account (atomic DB transaction).
- *  4. Create session → set __session cookie + csrf_token cookie.
+ *  4. Generate and send the app-owned email verification code. No session is
+ *     issued until the user verifies that code.
  */
 export async function handleGoogleCallback(
   code: string,
@@ -482,7 +645,11 @@ export async function handleGoogleCallback(
   reply: FastifyReply,
   config: AppConfig,
   state?: string,
-): Promise<{ user: { id: string; email: string } }> {
+): Promise<{
+  user: { id: string; email: string };
+  requiresVerification: true;
+  returnTo: string;
+}> {
   if (!config.OAUTH_GOOGLE_CLIENT_ID || !config.OAUTH_GOOGLE_CLIENT_SECRET) {
     throw createDataError('INTERNAL_ERROR', 'Google OAuth is not configured on this server.');
   }
@@ -491,8 +658,14 @@ export async function handleGoogleCallback(
   // authorization code. Consume the cookie either way so a state can't be replayed.
   const stateCookie = request.cookies[OAUTH_STATE_COOKIE_NAME];
   reply.clearCookie(OAUTH_STATE_COOKIE_NAME, { path: '/' });
+  const returnToCookie = request.cookies[OAUTH_RETURN_TO_COOKIE_NAME];
+  reply.clearCookie(OAUTH_RETURN_TO_COOKIE_NAME, { path: '/' });
 
   const expectedState = stateCookie ? request.unsignCookie(stateCookie) : null;
+  const requestedReturnTo = returnToCookie ? request.unsignCookie(returnToCookie) : null;
+  const returnTo = requestedReturnTo?.valid && requestedReturnTo.value
+    ? requestedReturnTo.value
+    : '/travelling';
   if (
     !state ||
     !expectedState?.valid ||
@@ -563,11 +736,14 @@ export async function handleGoogleCallback(
     },
   });
 
-  // Step 4: create session.
-  // Cookie-only: this is a top-level browser redirect, so there is no JSON body
-  // for a native client to read a token out of. Mobile Google sign-in needs a
-  // separate one-time-code exchange rather than reusing this callback.
-  await createSessionAndIssueCredentials(userId, reply, config, 'cookie');
+  // Step 4: require the same app-owned verification code as password signup.
+  // Google has authenticated the identity, but no website session is issued
+  // until the user enters the code sent to that address.
+  await sendVerificationCode(googleUser.email.toLowerCase().trim(), config);
 
-  return { user: { id: userId, email: googleUser.email } };
+  return {
+    user: { id: userId, email: googleUser.email },
+    requiresVerification: true,
+    returnTo,
+  };
 }

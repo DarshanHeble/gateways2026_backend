@@ -13,10 +13,15 @@
  */
 
 import { and, eq, lt, sql } from 'drizzle-orm';
+import crypto from 'node:crypto';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../db/schema/index.js';
 import { accounts, sessions, users, verificationTokens } from '../db/schema/auth.js';
+import { profiles, userRoles } from '../db/schema/identity.js';
+import { characters } from '../db/schema/characters.js';
 import { withTransaction } from '../db/transaction.js';
+import { createDataError } from '../errors/DataError.js';
+import { ensureDefaultCharacter } from './characters.repository.js';
 
 type Db = MySql2Database<typeof schema>;
 
@@ -41,6 +46,7 @@ export async function findUserByEmail(db: Db, email: string): Promise<PublicUser
       email: users.email,
       status: users.status,
       emailVerified: users.emailVerified,
+      mustChangePassword: users.mustChangePassword,
       createdAt: users.createdAt,
       updatedAt: users.updatedAt,
     })
@@ -76,6 +82,7 @@ export async function findUserById(db: Db, id: string): Promise<PublicUser | nul
       email: users.email,
       status: users.status,
       emailVerified: users.emailVerified,
+      mustChangePassword: users.mustChangePassword,
       createdAt: users.createdAt,
       updatedAt: users.updatedAt,
     })
@@ -94,17 +101,50 @@ export async function findUserById(db: Db, id: string): Promise<PublicUser | nul
  */
 export async function createUser(
   db: Db,
-  params: { id: string; email: string; passwordHash?: string },
+  params: {
+    id: string;
+    email: string;
+    username: string;
+    passwordHash?: string;
+    fullName?: string;
+    mustChangePassword?: boolean;
+  },
 ): Promise<string> {
   await withTransaction(db, async (tx) => {
+    const username = params.username.trim();
+    const existingCharacter = await tx
+      .select({ userId: characters.userId })
+      .from(characters)
+      .where(eq(sql`LOWER(${characters.playerName})`, username.toLowerCase()))
+      .limit(1);
+    if (existingCharacter[0]) {
+      throw createDataError('PLAYER_NAME_TAKEN', 'That username is already taken.');
+    }
+
     await tx.insert(users).values({
       id: params.id,
       email: params.email.toLowerCase(),
       passwordHash: params.passwordHash ?? null,
       status: 'ACTIVE',
+      mustChangePassword: params.mustChangePassword ?? false,
     });
-    // Profile row will be inserted here once identity schema is implemented (Phase 4).
-    // For now, the user row alone is sufficient for auth.
+    await tx.insert(profiles).values({
+      userId: params.id,
+      participantCode: `GWS26-${params.id.slice(0, 8).toUpperCase()}`,
+      fullName: params.fullName?.trim() || username,
+    });
+    await tx.insert(characters).values({
+      userId: params.id,
+      playerName: username,
+      totalXp: 0,
+      avatarAssetId: 'prospector',
+    });
+    await tx.insert(userRoles).values({
+      id: crypto.randomUUID(),
+      userId: params.id,
+      role: 'PARTICIPANT',
+      eventScopeId: null,
+    });
   });
   return params.id;
 }
@@ -117,6 +157,21 @@ export async function markEmailVerified(db: Db, userId: string): Promise<void> {
     .update(users)
     .set({ emailVerified: sql`now()` })
     .where(eq(users.id, userId));
+}
+
+export async function updatePassword(
+  db: Db,
+  userId: string,
+  passwordHash: string,
+): Promise<void> {
+  await db
+    .update(users)
+    .set({ passwordHash, mustChangePassword: false })
+    .where(eq(users.id, userId));
+}
+
+export async function deleteSessionsForUser(db: Db, userId: string): Promise<void> {
+  await db.delete(sessions).where(eq(sessions.userId, userId));
 }
 
 // ─── Session Queries ──────────────────────────────────────────────────────────
@@ -145,6 +200,7 @@ export async function findSessionByHashedToken(
         email: users.email,
         status: users.status,
         emailVerified: users.emailVerified,
+        mustChangePassword: users.mustChangePassword,
         createdAt: users.createdAt,
         updatedAt: users.updatedAt,
       },
@@ -348,7 +404,7 @@ export async function upsertOAuthAccount(
  * Atomic find-or-create for Google OAuth sign-in:
  *  1. Check if the OAuth account already exists → return linked userId.
  *  2. If not: check if a user with this email already exists (manual account) → link to it.
- *  3. If not: create a new user (email-verified, no password) + link the OAuth account.
+ *  3. If not: create a new user (email-unverified, no password) + link the OAuth account.
  *
  * All steps run inside a single transaction.
  * Returns the userId to create a session for.
@@ -407,16 +463,37 @@ export async function findOrCreateOAuthUser(
       // Link OAuth account to existing manual account
       targetUserId = existingUserRows[0].id;
     } else {
-      // Step 3: brand new user — create with email pre-verified (Google vouches for it)
+      // Step 3: brand new user — Google identifies the account, but the app
+      // still requires its own one-time verification code before issuing a
+      // session. This keeps Google and password signup on one verification path.
       await (tx as Db).insert(users).values({
         id: params.userId,
         email: params.email.toLowerCase(),
         passwordHash: null,
         status: 'ACTIVE',
-        emailVerified: new Date(),
+        emailVerified: null,
+      });
+      await (tx as Db).insert(profiles).values({
+        userId: params.userId,
+        participantCode: `GWS26-${params.userId.slice(0, 8).toUpperCase()}`,
+        fullName: params.googleProfile.name?.trim() || params.email.split('@')[0],
+      });
+      await (tx as Db).insert(userRoles).values({
+        id: crypto.randomUUID(),
+        userId: params.userId,
+        role: 'PARTICIPANT',
+        eventScopeId: null,
       });
       targetUserId = params.userId;
     }
+
+    // Existing manual accounts linked to Google may not have a character yet.
+    // Keep the OAuth path subject to the same default-character invariant.
+    await ensureDefaultCharacter(
+      tx as Db,
+      targetUserId,
+      params.googleProfile.name || params.email.split('@')[0],
+    );
 
     // Insert the OAuth account row
     await upsertOAuthAccount(tx as Db, {

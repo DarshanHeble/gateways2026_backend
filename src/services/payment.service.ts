@@ -8,7 +8,9 @@
  */
 
 import { v7 as uuidv7 } from 'uuid';
+import { and, eq, inArray } from 'drizzle-orm';
 import { getAppDb, getWriterDb } from '../db/index.js';
+import { loadConfig } from '../config/env.js';
 import { withDeadlockRetry, withTransaction } from '../db/transaction.js';
 import { DataError, createDataError } from '../errors/DataError.js';
 import {
@@ -25,7 +27,8 @@ import {
 import { insertAuditLogEntry } from '../repositories/audit-log.repository.js';
 import { cloudinaryStorage } from '../storage/cloudinary.storage.js';
 import { awardXp } from './xp.service.js';
-import type { PaymentReceipt } from '../db/schema/payments.js';
+import { paymentReceipts, type PaymentReceipt } from '../db/schema/payments.js';
+import { registrations } from '../db/schema/registrations.js';
 
 const MAX_FILE_SIZE_BYTES = 5_000_000;
 const PDF_DATA_URI_PREFIX = 'data:application/pdf;base64,';
@@ -34,6 +37,8 @@ export interface SubmitReceiptDto {
   fileData: string;
   fileName: string;
   fileSizeBytes: number;
+  paymentMethod?: 'upi' | 'neft' | 'gateway';
+  transactionReference?: string;
 }
 
 export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Promise<PaymentReceipt> {
@@ -54,6 +59,15 @@ export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Prom
   }
 
   const receiptId = uuidv7();
+  const transactionReference = dto.transactionReference?.trim().toUpperCase() || `LEGACY-${receiptId}`;
+  const duplicateReference = await appDb
+    .select({ id: paymentReceipts.id, userId: paymentReceipts.userId, status: paymentReceipts.status })
+    .from(paymentReceipts)
+    .where(eq(paymentReceipts.transactionReference, transactionReference))
+    .limit(1);
+  if (duplicateReference[0] && duplicateReference[0].userId !== userId) {
+    throw createDataError('VALIDATION_FAILED', 'That transaction reference has already been submitted.');
+  }
   const upload = await cloudinaryStorage.uploadFile({
     data: dto.fileData,
     folder: 'gateways/payment-receipts',
@@ -83,6 +97,9 @@ export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Prom
           fileUrl: upload.url,
           fileName: dto.fileName,
           fileSizeBytes: decodedBytes,
+          amountInr: loadConfig().ENTRY_PASS_AMOUNT_INR,
+          paymentMethod: dto.paymentMethod ?? 'upi',
+          transactionReference,
         });
 
         const inserted = await getReceiptByUser(tx, userId);
@@ -101,6 +118,9 @@ export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Prom
     } catch {
       // swallow — nothing more we can do here.
     }
+    if (isDuplicateKeyError(err)) {
+      throw createDataError('VALIDATION_FAILED', 'That transaction reference has already been submitted.');
+    }
     throw err;
   }
 
@@ -113,6 +133,14 @@ export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Prom
   }
 
   return created;
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  const value = error as { code?: string; cause?: { code?: string; errno?: number }; errno?: number } | null;
+  return value?.code === 'ER_DUP_ENTRY'
+    || value?.errno === 1062
+    || value?.cause?.code === 'ER_DUP_ENTRY'
+    || value?.cause?.errno === 1062;
 }
 
 export async function getOwnReceipt(userId: string): Promise<PaymentReceipt | null> {
@@ -164,6 +192,17 @@ export async function reviewReceipt(
           awardedBy: reviewerId,
         });
       }
+
+      // Legacy registrations may predate the payment-first gate. Keep their
+      // per-registration gate synchronized with the participant's single
+      // festival-pass receipt, while leaving the registration status itself
+      // unchanged for the organizer to manage.
+      await tx.update(registrations)
+        .set({ paymentStatus: dto.decision })
+        .where(and(
+          eq(registrations.userId, receipt.userId),
+          inArray(registrations.status, ['pending', 'confirmed', 'waitlisted']),
+        ));
 
       await insertAuditLogEntry(tx, {
         actorUserId: reviewerId,

@@ -9,6 +9,7 @@
 
 import {
   bigint,
+  boolean,
   mysqlTable,
   primaryKey,
   text,
@@ -28,13 +29,14 @@ export const users = mysqlTable('users', {
   passwordHash: varchar('password_hash', { length: 255 }),
   status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
   emailVerified: timestamp('email_verified', { fsp: 3 }),
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
   createdAt: timestamp('created_at', { fsp: 3 })
     .notNull()
     .default(sql`(now())`),
   updatedAt: timestamp('updated_at', { fsp: 3 })
     .notNull()
     .default(sql`(now())`)
-    .onUpdateNow(),
+    .$onUpdate(() => new Date()),
 });
 
 // ─── Accounts (OAuth Linked Accounts) ────────────────────────────────────────

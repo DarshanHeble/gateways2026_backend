@@ -16,6 +16,7 @@ import { and, eq } from 'drizzle-orm';
 import { createDataError } from '../errors/DataError.js';
 import { getWriterDb } from '../db/index.js';
 import { userRoles } from '../db/schema/identity.js';
+import { getUserRoleAssignments, type RoleAssignment } from '../repositories/user-roles.repository.js';
 
 // ─── Role Enum ────────────────────────────────────────────────────────────────
 
@@ -66,6 +67,69 @@ export async function assertAdmin(request: FastifyRequest): Promise<void> {
   }
 }
 
+export interface StaffContext {
+  assignments: RoleAssignment[];
+  isAdmin: boolean;
+  organizerEventIds: string[];
+  scannerEventIds: string[];
+}
+
+/**
+ * Resolve staff permissions from the database for this request. This deliberately
+ * does not use the session's role payload: revoking an assignment must take
+ * effect on the very next protected request.
+ */
+export async function getStaffContext(request: FastifyRequest): Promise<StaffContext> {
+  assertAuthenticated(request);
+  const assignments = await getUserRoleAssignments(getWriterDb(), request.user.id);
+  const staffAssignments = assignments.filter((assignment) =>
+    [UserRole.ADMIN, UserRole.ORGANIZER, UserRole.SCANNER].includes(assignment.role as 'ADMIN' | 'ORGANIZER' | 'SCANNER'),
+  );
+  if (!staffAssignments.length) {
+    throw createDataError('FORBIDDEN', 'Registration console access is required.');
+  }
+  return {
+    assignments: staffAssignments,
+    isAdmin: staffAssignments.some((assignment) => assignment.role === UserRole.ADMIN),
+    organizerEventIds: staffAssignments
+      .filter((assignment) => assignment.role === UserRole.ORGANIZER && assignment.eventScopeId)
+      .map((assignment) => assignment.eventScopeId!),
+    scannerEventIds: staffAssignments
+      .filter((assignment) => assignment.role === UserRole.SCANNER && assignment.eventScopeId)
+      .map((assignment) => assignment.eventScopeId!),
+  };
+}
+
+export async function assertStaff(request: FastifyRequest): Promise<StaffContext> {
+  return getStaffContext(request);
+}
+
+/**
+ * Assert that a staff member can operate on one event. ADMIN is global;
+ * ORGANIZER outranks SCANNER when both assignments exist for the event.
+ */
+export async function assertEventAccess(
+  request: FastifyRequest,
+  eventId: string,
+  minimumRole: 'SCANNER' | 'ORGANIZER' = 'SCANNER',
+): Promise<StaffContext> {
+  const context = await getStaffContext(request);
+  if (context.isAdmin) return context;
+  const organizer = context.organizerEventIds.includes(eventId);
+  const scanner = context.scannerEventIds.includes(eventId);
+  if (organizer || (minimumRole === 'SCANNER' && scanner)) return context;
+  throw createDataError('FORBIDDEN', 'You are not assigned to this event.');
+}
+
+export async function accessibleEventIds(context: StaffContext, selectedEventId?: string): Promise<string[] | null> {
+  if (context.isAdmin) return selectedEventId ? [selectedEventId] : null;
+  const ids = [...new Set([...context.organizerEventIds, ...context.scannerEventIds])];
+  if (selectedEventId && !ids.includes(selectedEventId)) {
+    throw createDataError('FORBIDDEN', 'You are not assigned to this event.');
+  }
+  return selectedEventId ? [selectedEventId] : ids;
+}
+
 // ─── assertOrganizer ──────────────────────────────────────────────────────────
 
 /**
@@ -75,12 +139,7 @@ export async function assertAdmin(request: FastifyRequest): Promise<void> {
  */
 export async function assertOrganizer(
   request: FastifyRequest,
-  _eventId: string,
+  eventId: string,
 ): Promise<void> {
-  assertAuthenticated(request);
-  // TODO(Phase 4): query event_organizers WHERE event_id = _eventId AND user_id = request.user.id
-  throw createDataError(
-    'FORBIDDEN',
-    'Organizer role enforcement requires the events schema (Phase 4). Not yet available.',
-  );
+  await assertEventAccess(request, eventId, 'ORGANIZER');
 }

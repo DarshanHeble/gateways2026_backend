@@ -33,6 +33,7 @@ export interface AuthenticatedUser {
   email: string;
   status: string;
   emailVerified: Date | string | null;
+  mustChangePassword: boolean;
 }
 
 /**
@@ -156,6 +157,7 @@ export async function registerSessionHook(app: FastifyInstance): Promise<void> {
       email: user.email,
       status: user.status,
       emailVerified: user.emailVerified,
+      mustChangePassword: user.mustChangePassword,
     };
     request.authTransport = extracted.transport;
 

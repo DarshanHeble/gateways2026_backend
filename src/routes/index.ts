@@ -25,6 +25,13 @@ import { registerAuthRoutes } from './auth.routes.js';
 import { registerPaymentReceiptRoutes } from './payment-receipts.routes.js';
 import { registerAdminAuthRoutes } from './admin/auth.routes.js';
 import { registerAdminPaymentRoutes } from './admin/payments.routes.js';
+import { registerProfileRoutes } from './profiles.routes.js';
+import { registerCharacterRoutes } from './characters.routes.js';
+import { registerCoreEventRoutes } from './core-events.routes.js';
+import { registerRegistrationRoutes } from './registrations.routes.js';
+import { registerTeamRoutes } from './teams.routes.js';
+import { registerReferenceRoutes } from './reference.routes.js';
+import { registerAdminCoreRoutes } from './admin/core.routes.js';
 
 export async function registerV1Routes(app: FastifyInstance, config: AppConfig) {
   await app.register(
@@ -44,6 +51,13 @@ export async function registerV1Routes(app: FastifyInstance, config: AppConfig) 
         { prefix: '/payment-receipts' },
       );
 
+      await v1.register(async (profilesApp) => registerProfileRoutes(profilesApp), { prefix: '/profiles' });
+      await v1.register(async (charactersApp) => registerCharacterRoutes(charactersApp), { prefix: '/characters' });
+      await v1.register(async (eventsApp) => registerCoreEventRoutes(eventsApp), { prefix: '/events' });
+      await v1.register(async (registrationsApp) => registerRegistrationRoutes(registrationsApp), { prefix: '/registrations' });
+      await v1.register(async (teamsApp) => registerTeamRoutes(teamsApp), { prefix: '/teams' });
+      await v1.register(async (referenceApp) => registerReferenceRoutes(referenceApp), { prefix: '/reference' });
+
       // ── Admin surface ──────────────────────────────────────────────────────
       // Every route registered below MUST call assertAdmin in its handler. The
       // prefix is organisational, not a guard — Fastify has no notion of an
@@ -62,6 +76,13 @@ export async function registerV1Routes(app: FastifyInstance, config: AppConfig) 
               await registerAdminPaymentRoutes(adminPayments, config);
             },
             { prefix: '/payments' },
+          );
+
+          await admin.register(
+            async (adminCore) => {
+              await registerAdminCoreRoutes(adminCore, config);
+            },
+            { prefix: '' },
           );
         },
         { prefix: '/admin' },

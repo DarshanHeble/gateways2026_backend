@@ -21,6 +21,7 @@ function toIso(value: Date | string | null): string | null {
 }
 
 export function serializeReceipt(receipt: PaymentReceipt, fileUrl: string) {
+  const paymentMethod = receipt.paymentMethod as 'upi' | 'neft' | 'gateway' | null;
   return {
     id: receipt.id,
     userId: receipt.userId,
@@ -32,10 +33,18 @@ export function serializeReceipt(receipt: PaymentReceipt, fileUrl: string) {
     reviewedBy: receipt.reviewedBy,
     reviewedAt: toIso(receipt.reviewedAt),
     rejectionReason: receipt.rejectionReason,
+    amountInr: receipt.amountInr,
+    paymentMethod,
+    transactionReference: receipt.transactionReference,
   };
 }
 
-export function serializeAdminPayment(receipt: ReceiptWithEmails, entryPassAmountInr: number) {
+export function serializeAdminPayment(
+  receipt: ReceiptWithEmails,
+  entryPassAmountInr: number,
+  registrationIds: string[] = [],
+) {
+  const paymentMethod = receipt.paymentMethod as 'upi' | 'neft' | 'gateway' | null;
   return {
     id: receipt.id,
     participantId: receipt.userId,
@@ -43,21 +52,20 @@ export function serializeAdminPayment(receipt: ReceiptWithEmails, entryPassAmoun
 
     // Every receipt is the same fixed global pass, so the amount is genuinely
     // known — unlike the fields below.
-    amount: entryPassAmountInr,
-    breakdown: [{ label: 'Gateways 2026 entry pass', amount: entryPassAmountInr }],
+    amount: receipt.amountInr ?? entryPassAmountInr,
+    breakdown: [{ label: 'Gateways 2026 entry pass', amount: receipt.amountInr ?? entryPassAmountInr }],
 
     // Deliberately null, not a plausible default. A reviewer reads this column and
     // makes a decision on it; rendering "UPI" for a payment channel the system has
     // never recorded would be fabricating evidence in the one place it costs most.
     // The dashboard should widen these to `| null` and render an em dash.
-    method: null,
-    utr: null,
+    method: paymentMethod,
+    utr: receipt.transactionReference,
     invoiceSerial: null,
     receiptHash: null,
     deskShiftId: null,
 
-    // Empty until the registrations lane exists / fraud detection is built.
-    registrationIds: [],
+    registrationIds,
     fraudFlags: [],
 
     fileName: receipt.fileName,

@@ -43,6 +43,8 @@ describe('POST /payment-receipts — bodyLimit', () => {
         fileData: `data:application/pdf;base64,${bigBase64}`,
         fileName: 'receipt.pdf',
         fileSizeBytes: 2_000_000,
+        paymentMethod: 'upi',
+        transactionReference: 'TEST-BODY-LIMIT-001',
       },
     });
 
