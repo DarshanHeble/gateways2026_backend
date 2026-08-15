@@ -8,6 +8,7 @@ import { sessions, users } from '../../db/schema/auth.js';
 import { characters } from '../../db/schema/characters.js';
 import { auditLog } from '../../db/schema/payments.js';
 import { profiles, userRoles } from '../../db/schema/identity.js';
+import { colleges } from '../../db/schema/reference.js';
 import { createSession } from '../../repositories/auth.repository.js';
 import { generateSessionToken, hashSessionToken } from '../../security/jwt.js';
 import { createTestUser, deleteTestUser, grantRole } from '../../test-helpers/db.js';
@@ -15,6 +16,18 @@ import { createTestUser, deleteTestUser, grantRole } from '../../test-helpers/db
 const db = getAppDb();
 let app: FastifyInstance;
 const cleanupUserIds: string[] = [];
+
+/**
+ * This spec asserts that erasure nulls out `profiles.college_id`, which means it
+ * needs a NON-null college to begin with — otherwise the assertion passes
+ * trivially against a column that was never set.
+ *
+ * The college is created here rather than assumed to exist. Nothing in the
+ * migrations or `db:seed` populates `colleges`, so depending on ambient
+ * reference data makes the test pass only on a database someone had already
+ * hand-populated, and fail on every fresh clone and in CI.
+ */
+const TEST_COLLEGE_ID = 'test-college-erasure-spec';
 
 async function signedInUser(role?: string) {
   const user = await createTestUser(db);
@@ -34,10 +47,19 @@ async function signedInUser(role?: string) {
 beforeAll(async () => {
   ({ app } = await buildApp());
   await app.ready();
+
+  // Delete-then-insert rather than a bare insert: a run that crashed before its
+  // afterAll would otherwise leave the row behind and fail the next run on the
+  // primary key.
+  await db.delete(colleges).where(eq(colleges.id, TEST_COLLEGE_ID));
+  await db.insert(colleges).values({ id: TEST_COLLEGE_ID, name: 'Test College (erasure spec)' });
 });
 
 afterAll(async () => {
+  // Users first — profiles reference the college, so removing it earlier would
+  // trip the same foreign key this fixture exists to satisfy.
   for (const id of cleanupUserIds) await deleteTestUser(db, id);
+  await db.delete(colleges).where(eq(colleges.id, TEST_COLLEGE_ID));
   await app.close();
 });
 
@@ -52,7 +74,7 @@ describe('participant privacy erasure', () => {
       participantCode: `GWS26-${participant.id.slice(0, 8).toUpperCase()}`,
       fullName: 'A Real Participant',
       phone: '+919999999999',
-      collegeId: 'college-1',
+      collegeId: TEST_COLLEGE_ID,
       bio: 'private profile data',
     });
     await db.insert(characters).values({

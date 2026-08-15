@@ -16,6 +16,7 @@
     "db:push:prod": "NODE_ENV=production drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/db/seed.ts",
+    "db:baseline": "tsx scripts/seed-migration-history.ts",
     "role:grant": "tsx scripts/grant-role.ts",
     "db:up": "docker compose up -d mysql",
     "db:down": "docker compose stop mysql",
