@@ -6,7 +6,7 @@ import {
   ListEventsResponseSchema,
   WebhookAckSchema,
 } from '../schemas/events.schemas.js';
-import { fetchEventsFromSheet } from '../services/sheets.service.js';
+import { fetchEventsFromSheet, invalidateSheetCache } from '../services/sheets.service.js';
 
 /**
  * Events routes plugin.
@@ -100,11 +100,11 @@ export async function eventsRoutes(app: FastifyInstance) {
         });
       }
 
-      request.log.info('Sheet update webhook received. No cache to invalidate; next fetch will be fresh.');
+      invalidateSheetCache();
+      request.log.info('Sheet update webhook received. Cached snapshot dropped.');
 
       return reply.send({
-        message:
-          'Acknowledged. No cache is in use; the next GET /api/events call will fetch fresh data from Google Sheets.',
+        message: 'Acknowledged. Cached snapshot dropped; the next read will fetch fresh data from Google Sheets.',
       });
     }
   );

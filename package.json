@@ -21,7 +21,7 @@
     "db:up": "docker compose up -d mysql",
     "db:down": "docker compose stop mysql",
     "build": "tsc",
-    "start": "node dist/app.js",
+    "start": "NODE_ENV=production node dist/app.js",
     "start:preprod": "NODE_ENV=preproduction node dist/app.js",
     "start:prod": "NODE_ENV=production node dist/app.js",
     "test": "vitest run",

@@ -16,7 +16,7 @@ import { createDataError } from '../../errors/DataError.js';
 import { assertAdmin, assertEventAccess, assertStaff, accessibleEventIds, UserRole } from '../../security/roles.js';
 import { hashPassword } from '../../security/password.js';
 import { assertAuthenticated } from '../../plugins/jwt-auth.js';
-import { insertAuditLogEntry } from '../../repositories/audit-log.repository.js';
+import { auditRequest, insertAuditLogEntry, listAuditEntries } from '../../repositories/audit-log.repository.js';
 import { getUserRoleAssignments } from '../../repositories/user-roles.repository.js';
 import { listEvents } from '../../repositories/events.repository.js';
 import { listProfiles, getProfile, updateProfile } from '../../repositories/profiles.repository.js';
@@ -70,6 +70,23 @@ const ParticipantEraseBody = z.object({
 function iso(value: Date | string | null | undefined): string | null {
   if (value == null) return null;
   return typeof value === 'string' ? new Date(value).toISOString() : value.toISOString();
+}
+
+/**
+ * audit_log.metadata is a TEXT column holding a JSON string, so a malformed or
+ * non-object value is possible (hand-written rows, older writers). One bad row
+ * must not fail the whole page.
+ */
+function parseAuditMetadata(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function serializeEvent(row: any) {
@@ -286,6 +303,16 @@ export async function registerAdminCoreRoutes(app: FastifyInstance, config: AppC
     }
     const profile = await updateProfile(getAppDb(), participantId, request.body);
     if (!profile) throw createDataError('NOT_FOUND', 'Participant not found.');
+    // Field NAMES only. The values are the participant's personal data, and
+    // copying them here would turn the audit log into a second, less protected
+    // store of exactly what it exists to protect.
+    await auditRequest(request, {
+      action: 'participant_profile_edited',
+      targetType: 'user',
+      targetId: participantId,
+      eventId: request.query.eventId ?? null,
+      metadata: { fields: Object.keys(request.body ?? {}).sort() },
+    });
     return serializeProfile(profile);
   });
 
@@ -382,6 +409,15 @@ export async function registerAdminCoreRoutes(app: FastifyInstance, config: AppC
     if (request.body.status === 'cancelled') await cancelRegistration(existing.registration.id, request.user.id, request.body.note);
     else await setRegistrationStatus(existing.registration.id, request.body.status, request.body.note);
     const updated = await getRegistration(getAppDb(), existing.registration.id);
+    // eventId is populated so this row is visible to the organisers of that
+    // event, not just to administrators.
+    await auditRequest(request, {
+      action: 'registration_status_changed',
+      targetType: 'registration',
+      targetId: existing.registration.id,
+      eventId: existing.registration.eventId,
+      metadata: { from: existing.registration.status, to: request.body.status, note: request.body.note ?? null },
+    });
     return serializeRegistration(updated);
   });
 
@@ -511,4 +547,86 @@ export async function registerAdminCoreRoutes(app: FastifyInstance, config: AppC
     await insertAuditLogEntry(db, { actorUserId: request.user.id, action: 'staff_assignment_revoked', targetType: 'user', targetId: params.id, metadata: { role: row.role, eventId: row.eventScopeId } });
     return { message: 'Assignment revoked.' };
   });
+
+  // ─── Audit log ───────────────────────────────────────────────────────────
+  // ADMIN reads everything. ORGANIZER reads only rows tagged with an event they
+  // organise; rows with no event_id (sign-ins, role grants, profile edits) stay
+  // ADMIN-only. Scoping deliberately uses organizerEventIds and NOT
+  // accessibleEventIds — the latter also includes scanner assignments, which
+  // would hand the registration desk a supervision tool it should not have.
+  router.get(
+    '/audit',
+    {
+      schema: {
+        tags: ['Admin · Audit'],
+        summary: 'List audit log entries',
+        description:
+          'Newest-first, keyset-paginated on the uuidv7 primary key. Follow `nextCursor` until it is null; cursors are opaque. ' +
+          'ADMIN sees all entries; ORGANIZER sees only entries scoped to events they organise.',
+        querystring: z.object({
+          action: z.string().max(128).optional(),
+          actorId: z.string().max(36).optional(),
+          limit: z.coerce.number().int().min(1).max(200).optional(),
+          cursor: z.string().max(36).optional(),
+        }),
+        response: {
+          200: z.object({
+            items: z.array(
+              z.object({
+                id: z.string(),
+                actorId: z.string(),
+                actorName: z.string().nullable(),
+                actorEmail: z.string().nullable(),
+                action: z.string(),
+                targetType: z.string(),
+                targetId: z.string(),
+                eventId: z.string().nullable(),
+                correlationId: z.string().nullable(),
+                metadata: z.record(z.string(), z.unknown()).nullable(),
+                createdAt: z.string(),
+              }),
+            ),
+            nextCursor: z.string().nullable(),
+          }),
+          401: ErrorResponseSchema,
+          403: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request) => {
+      assertAuthenticated(request);
+      const context = await assertStaff(request);
+      const { action, actorId, cursor } = request.query;
+      const limit = request.query.limit ?? 50;
+
+      // Fetch one extra row to detect whether a further page exists.
+      const rows = await listAuditEntries(getAppDb(), {
+        action,
+        actorUserId: actorId,
+        eventIds: context.isAdmin ? undefined : context.organizerEventIds,
+        limit: limit + 1,
+        cursorId: cursor,
+      });
+
+      const page = rows.slice(0, limit);
+      return {
+        items: page.map((row) => ({
+          id: row.id,
+          actorId: row.actorUserId,
+          actorName: row.actorName,
+          actorEmail: row.actorEmail,
+          action: row.action,
+          targetType: row.targetType,
+          targetId: row.targetId,
+          eventId: row.eventId,
+          correlationId: row.correlationId,
+          // Stored as a TEXT column, so a malformed row is possible. Degrade to
+          // null rather than 500-ing the whole page.
+          metadata: parseAuditMetadata(row.metadata),
+          createdAt: row.createdAt.toISOString(),
+        })),
+        nextCursor: rows.length > limit ? page[page.length - 1].id : null,
+      };
+    },
+  );
 }

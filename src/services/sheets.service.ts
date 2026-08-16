@@ -36,37 +36,98 @@ function getSheetClient(): GoogleSpreadsheet {
 }
 
 /**
- * Fetches all rows from the first tab of the configured Google Sheet.
- * Each row is converted to a plain object using the sheet's header row as keys.
+ * How long a fetched snapshot is served before Google is consulted again.
+ *
+ * This MUST exist now that the website polls every 5s. Each miss costs two
+ * Google API calls (loadInfo + getRows) against a 300-reads/min/project quota,
+ * so a single open browser tab would burn 24/min and roughly a dozen concurrent
+ * visitors would exhaust it — every visitor then sees 503 until the minute
+ * rolls over. With this cache the cost is independent of traffic: at most two
+ * calls per TTL no matter how many people are watching.
+ *
+ * Matched to the poll interval, so a sheet edit is visible within ~10s worst
+ * case (5s stale window + 5s until the next poll). The webhook below shortcuts
+ * that to the next poll.
+ */
+const CACHE_TTL_MS = 5_000;
+
+/** Longest a stale snapshot may be served after Google starts failing. */
+const MAX_STALE_MS = 5 * 60_000;
+
+interface Snapshot {
+  at: number;
+  rows: Record<string, unknown>[];
+}
+
+let snapshot: Snapshot | null = null;
+let inFlight: Promise<Record<string, unknown>[]> | null = null;
+
+/**
+ * Drops the cached snapshot so the next read goes to Google.
+ * Called by the sheet-update webhook.
+ */
+export function invalidateSheetCache(): void {
+  snapshot = null;
+}
+
+async function fetchRowsFromGoogle(): Promise<Record<string, unknown>[]> {
+  const doc = getSheetClient();
+
+  // loadInfo() fetches sheet metadata (title, tabs, etc.) from the API.
+  // This must be called before accessing sheetsByIndex.
+  await doc.loadInfo();
+
+  const sheet = doc.sheetsByIndex[0];
+  const rows = await sheet.getRows();
+
+  // row.toObject() converts each row into a plain { header: value } object
+  // based on the sheet's first-row column headers.
+  return rows.map((row: any) => row.toObject() as Record<string, unknown>);
+}
+
+/**
+ * Fetches all rows from the first tab of the configured Google Sheet, served
+ * from a short-lived cache.
  *
  * Throws DataError('STORAGE_UNAVAILABLE') — which maps to HTTP 503 — on any
  * Google Sheets API failure, so the global error handler in security.ts handles
  * the response shape automatically.
  */
 export async function fetchEventsFromSheet(): Promise<Record<string, unknown>[]> {
-  try {
-    const doc = getSheetClient();
+  if (snapshot && Date.now() - snapshot.at < CACHE_TTL_MS) return snapshot.rows;
 
-    // loadInfo() fetches sheet metadata (title, tabs, etc.) from the API.
-    // This must be called before accessing sheetsByIndex.
-    await doc.loadInfo();
+  // Single-flight. Without this, every request arriving during a slow fetch
+  // starts its own — precisely the stampede the cache exists to prevent, and
+  // worst exactly when Google is already struggling.
+  if (inFlight) return inFlight;
 
-    const sheet = doc.sheetsByIndex[0];
-    const rows = await sheet.getRows();
+  inFlight = fetchRowsFromGoogle()
+    .then((rows) => {
+      snapshot = { at: Date.now(), rows };
+      return rows;
+    })
+    .catch((err: unknown) => {
+      // Re-throw known DataErrors directly (config missing, etc.).
+      if (err && typeof err === 'object' && 'name' in err && (err as any).name === 'DataError') {
+        throw err;
+      }
 
-    // row.toObject() converts each row into a plain { header: value } object
-    // based on the sheet's first-row column headers.
-    return rows.map((row: any) => row.toObject() as Record<string, unknown>);
-  } catch (err: unknown) {
-    // Re-throw known DataErrors directly (defensive — shouldn't occur here).
-    if (err && typeof err === 'object' && 'code' in err && (err as any).name === 'DataError') {
-      throw err;
-    }
+      // Serve stale rather than empty the events page for a transient blip.
+      // At a 5s poll a single failed call would otherwise blank the UI for
+      // every visitor at once; a few-minute-old event list is strictly better
+      // than none, and MAX_STALE_MS stops it hiding a sustained outage.
+      if (snapshot && Date.now() - snapshot.at < MAX_STALE_MS) {
+        return snapshot.rows;
+      }
 
-    // Map all Google API / network errors to a standardized 503.
-    throw createDataError(
-      'STORAGE_UNAVAILABLE',
-      'Failed to fetch events from Google Sheets. The service may be temporarily unavailable.'
-    );
-  }
+      throw createDataError(
+        'STORAGE_UNAVAILABLE',
+        'Failed to fetch events from Google Sheets. The service may be temporarily unavailable.'
+      );
+    })
+    .finally(() => {
+      inFlight = null;
+    });
+
+  return inFlight;
 }

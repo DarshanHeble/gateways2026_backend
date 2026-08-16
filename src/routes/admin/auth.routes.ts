@@ -12,11 +12,13 @@
  * at token expiry. Do not "optimize" that away by trusting this login check.
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { AppConfig } from '../../config/env.js';
 import { assertAuthenticated } from '../../plugins/jwt-auth.js';
+import { ANONYMOUS_ACTOR, auditRequest } from '../../repositories/audit-log.repository.js';
+import { findUserByEmail } from '../../repositories/auth.repository.js';
 import { getUserRoles } from '../../repositories/user-roles.repository.js';
 import { getAppDb } from '../../db/index.js';
 import { createDataError } from '../../errors/DataError.js';
@@ -52,6 +54,33 @@ const AdminSessionResponseSchema = z.object({
   roles: z.array(z.object({ role: z.string(), eventScopeId: z.string().nullable() })),
 });
 
+/**
+ * Record a failed sign-in.
+ *
+ * Attribution differs by case on purpose. When the address matches an account the
+ * row is attributed to that user, which is what makes "five failed attempts
+ * against this account" answerable. When it matches nothing there is no user to
+ * point at, so the row uses the anonymous sentinel and keeps the attempted
+ * address as the target — that is the shape that reveals enumeration sweeps.
+ *
+ * Only the address, a fixed reason and the source IP are recorded. The submitted
+ * password must never reach this table.
+ */
+async function auditSigninFailure(
+  request: FastifyRequest,
+  email: string,
+  reason: 'invalid_credentials',
+): Promise<void> {
+  const existing = await findUserByEmail(getAppDb(), email.toLowerCase().trim());
+  await auditRequest(request, {
+    action: 'admin_signin_failed',
+    targetType: existing ? 'user' : 'email',
+    targetId: existing ? existing.id : email.toLowerCase().trim(),
+    actorUserId: existing ? existing.id : ANONYMOUS_ACTOR,
+    metadata: { reason: existing ? reason : 'unknown_email', ip: request.ip },
+  });
+}
+
 export async function registerAdminAuthRoutes(app: FastifyInstance, config: AppConfig) {
   const router = app.withTypeProvider<ZodTypeProvider>();
 
@@ -84,10 +113,23 @@ export async function registerAdminAuthRoutes(app: FastifyInstance, config: AppC
       // issue a session — so a non-admin with a correct password leaves no
       // session row behind. Verifying first also keeps "wrong password" and
       // "not an admin" indistinguishable to anyone probing for admin accounts.
-      const user = await verifyPasswordCredentials(request.body);
+      let user;
+      try {
+        user = await verifyPasswordCredentials(request.body);
+      } catch (error) {
+        await auditSigninFailure(request, request.body.email, 'invalid_credentials');
+        throw error;
+      }
 
       const roles = await getUserRoles(db, user.id);
       if (!roles.includes(UserRole.ADMIN)) {
+        await auditRequest(request, {
+          action: 'admin_signin_failed',
+          targetType: 'user',
+          targetId: user.id,
+          actorUserId: user.id,
+          metadata: { reason: 'not_an_admin', ip: request.ip },
+        });
         throw createDataError('FORBIDDEN', 'This account is not an administrator.');
       }
 
@@ -97,6 +139,16 @@ export async function registerAdminAuthRoutes(app: FastifyInstance, config: AppC
         config,
         resolveRequestedTransport(request),
       );
+
+      // request.user is not populated on the signin request itself, so the actor
+      // is passed explicitly — it is only known once credentials resolve.
+      await auditRequest(request, {
+        action: 'admin_signin_succeeded',
+        targetType: 'user',
+        targetId: user.id,
+        actorUserId: user.id,
+        metadata: { ip: request.ip },
+      });
 
       return reply.send({ user, ...(credentials ?? {}) });
     },
@@ -145,7 +197,17 @@ export async function registerAdminAuthRoutes(app: FastifyInstance, config: AppC
       },
     },
     async (request, reply) => {
+      // Captured before the session is destroyed — afterwards request.user is gone.
+      const actorUserId = request.user?.id;
       await signoutEverywhere(request, reply);
+      if (actorUserId) {
+        await auditRequest(request, {
+          action: 'admin_signed_out',
+          targetType: 'user',
+          targetId: actorUserId,
+          actorUserId,
+        });
+      }
       return reply.send({ message: 'Signed out.' });
     },
   );

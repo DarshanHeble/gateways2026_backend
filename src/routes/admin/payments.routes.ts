@@ -21,6 +21,7 @@ import {
   reviewReceipt,
 } from '../../services/payment.service.js';
 import { ReviewReceiptBodySchema } from '../../schemas/payment.schemas.js';
+import { auditRequest } from '../../repositories/audit-log.repository.js';
 import { getAppDb } from '../../db/index.js';
 import { listRegistrationsForUsers } from '../../repositories/registrations.repository.js';
 
@@ -157,7 +158,16 @@ export async function registerAdminPaymentRoutes(app: FastifyInstance, config: A
     async (request) => {
       assertAuthenticated(request);
       await assertAdmin(request);
-      return getReceiptDownloadUrl(request.params.id);
+      const result = await getReceiptDownloadUrl(request.params.id);
+      // Audited after the URL is minted, so receipts that 404 or were erased do
+      // not show up as views. Opening a receipt exposes a participant's payment
+      // document, which is why the read itself belongs on the record.
+      await auditRequest(request, {
+        action: 'payment_receipt_viewed',
+        targetType: 'payment_receipt',
+        targetId: request.params.id,
+      });
+      return result;
     },
   );
 

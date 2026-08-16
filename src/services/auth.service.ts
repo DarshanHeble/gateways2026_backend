@@ -662,6 +662,61 @@ export async function exchangeConsoleHandoff(
   };
 }
 
+/**
+ * The reverse of `createConsoleHandoff`: a staff member already signed into the
+ * registration console can hand their session back to the website. Reuses the
+ * same one-time-code table with `target: 'website'` rather than a second table.
+ *
+ * This must be a real browser navigation, not a background fetch — the
+ * website's session cookie is issued for the website's own origin, and a
+ * cross-origin request from the console cannot set it (this is also why the
+ * console session is a bearer token in the first place, see `signoutEverywhere`
+ * above). The console UI triggers this explicitly (e.g. an "Open participant
+ * site" action), it is not automatic on every console sign-in.
+ */
+export async function createWebsiteHandoff(
+  request: FastifyRequest,
+  config: AppConfig,
+  returnTo = '/',
+): Promise<{ url: string; expiresAt: string }> {
+  assertAuthenticated(request);
+  const code = await createHandoffCode(getAppDb(), { userId: request.user.id, returnTo, target: 'website' });
+  const expiresAt = new Date(Date.now() + 90_000).toISOString();
+  const url = `${config.FRONTEND_BASE_URL.replace(/\/$/, '')}/auth/console-return?code=${encodeURIComponent(code)}&returnTo=${encodeURIComponent(returnTo)}`;
+  return { url, expiresAt };
+}
+
+export async function exchangeWebsiteHandoff(
+  code: string,
+  reply: FastifyReply,
+  config: AppConfig,
+): Promise<{
+  expiresAt: string;
+  returnTo: string;
+  user: { id: string; email: string; status: string; mustChangePassword: boolean };
+}> {
+  const db = getAppDb();
+  const handoff = await consumeHandoffCode(db, code, 'website');
+  if (!handoff) throw createDataError('INVALID_CREDENTIALS', 'This sign-in link is invalid or expired.');
+
+  const user = await findUserById(db, handoff.userId);
+  if (!user) throw createDataError('NOT_AUTHENTICATED', 'Account no longer exists.');
+
+  const credentials = await issueSessionFor(user.id, reply, config, 'cookie');
+  if (!credentials) throw createDataError('INTERNAL_ERROR', 'Could not create website session.');
+
+  return {
+    expiresAt: credentials.expiresAt,
+    returnTo: handoff.returnTo,
+    user: {
+      id: user.id,
+      email: user.email,
+      status: user.status,
+      mustChangePassword: user.mustChangePassword,
+    },
+  };
+}
+
 // ─── 6. Google OAuth — Initiate ──────────────────────────────────────────────
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
