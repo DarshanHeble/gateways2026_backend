@@ -76,6 +76,7 @@ const EXPECTED_PATHS = [
   '/api/v1/admin/payments/',
   '/api/v1/admin/payments/bulk-review',
   '/api/v1/admin/payments/{id}',
+  '/api/v1/admin/payments/{id}/receipt-file',
   '/api/v1/admin/payments/{id}/receipt-url',
   '/api/v1/admin/payments/{id}/review',
   '/api/v1/admin/overview',

@@ -17,6 +17,7 @@ import {
   bulkReviewReceipts,
   getPaymentForAdmin,
   getReceiptDownloadUrl,
+  getReceiptFile,
   listPaymentsForAdmin,
   reviewReceipt,
 } from '../../services/payment.service.js';
@@ -168,6 +169,39 @@ export async function registerAdminPaymentRoutes(app: FastifyInstance, config: A
         targetId: request.params.id,
       });
       return result;
+    },
+  );
+
+  router.get(
+    '/:id/receipt-file',
+    {
+      schema: {
+        tags: ['Admin · Payments'],
+        summary: 'Stream the receipt file for inline viewing (Admin only)',
+        description:
+          'Returns the receipt bytes with an inline Content-Disposition so the console can ' +
+          'embed it directly. Proxied through this endpoint rather than redirecting to storage: ' +
+          'the storage URL stays server-side and keeps its short expiry.',
+        params: z.object({ id: z.string() }),
+        // No response schema: this route returns raw bytes, and declaring one
+        // makes the type provider expect a JSON body.
+      },
+    },
+    async (request, reply) => {
+      assertAuthenticated(request);
+      await assertAdmin(request);
+      const file = await getReceiptFile(request.params.id);
+      await auditRequest(request, {
+        action: 'payment_receipt_viewed',
+        targetType: 'payment_receipt',
+        targetId: request.params.id,
+      });
+      return reply
+        .header('content-type', file.contentType)
+        // inline, not attachment — this is the whole point of the endpoint.
+        .header('content-disposition', `inline; filename="${file.fileName.replace(/"/g, '')}"`)
+        .header('cache-control', 'private, no-store')
+        .send(file.body);
     },
   );
 
