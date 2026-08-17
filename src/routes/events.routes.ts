@@ -6,12 +6,14 @@ import {
   ListEventsResponseSchema,
   WebhookAckSchema,
 } from '../schemas/events.schemas.js';
-import { fetchEventsFromSheet, invalidateSheetCache } from '../services/sheets.service.js';
+import { invalidateSheetCache } from '../services/sheets.service.js';
+import { getAppDb } from '../db/index.js';
+import { listEvents } from '../repositories/events.repository.js';
 
 /**
  * Events routes plugin.
  * Registers:
- *   GET  /api/events                   — Public. Returns all events from Google Sheets.
+ *   GET  /api/events                   — Public legacy alias for database events.
  *   POST /api/webhook/sheet-update     — Protected by x-webhook-secret header.
  *                                        Signals the backend that Sheets data changed.
  *
@@ -27,16 +29,15 @@ export async function eventsRoutes(app: FastifyInstance) {
 
   // ---------------------------------------------------------------------------
   // GET /api/events
-  // Public endpoint. Fetches all event rows directly from Google Sheets.
-  // No cache — every request calls the Sheets API. Failures → 503.
+  // Public legacy alias. MySQL remains the canonical catalogue so this route
+  // cannot drift away from the registration and console event IDs.
   // ---------------------------------------------------------------------------
   typedApp.get(
     '/events',
     {
       schema: {
         description:
-          'Returns the full list of fest events fetched live from Google Sheets. ' +
-          'No caching is applied — each call reflects the current sheet state.',
+          'Returns the canonical database-backed fest event catalogue.',
         tags: ['Events'],
         summary: 'List all fest events',
         response: {
@@ -46,12 +47,9 @@ export async function eventsRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      // fetchEventsFromSheet() throws DataError('STORAGE_UNAVAILABLE') on any
-      // Google API failure. The global error handler in security.ts catches it
-      // and sends the correct 503 JSON response — no try/catch needed here.
-      const events = await fetchEventsFromSheet();
-      request.log.info({ count: events.length }, 'Fetched events from Google Sheets');
-      return reply.send(events);
+      const rows = await listEvents(getAppDb());
+      request.log.info({ count: rows.length }, 'Fetched events from the canonical database');
+      return reply.send(rows.map(({ event, categorySlug }) => ({ ...event, categorySlug })));
     }
   );
 
