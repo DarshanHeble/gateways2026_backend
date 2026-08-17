@@ -25,6 +25,13 @@ export const ADMIN_PREFIX = `${API_V1_PREFIX}/admin`;
 export const GOOGLE_CALLBACK_PATH = `${API_V1_PREFIX}/auth/callback/google`;
 
 /**
+ * Sheet-change notification, registered by eventsRoutes under the `/api` prefix.
+ * Declared here because it must also appear in CSRF_EXEMPT_PATHS below, and the
+ * two would drift if the literal were written twice.
+ */
+export const SHEET_WEBHOOK_PATH = '/api/webhook/sheet-update';
+
+/**
  * Routes exempt from CSRF double-submit verification: no session exists yet when
  * they are called, so there is no cookie to double-submit.
  *
@@ -42,4 +49,12 @@ export const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([
   `${API_V1_PREFIX}/auth/callback/google`,
   `${API_V1_PREFIX}/auth/console-handoff/exchange`,
   `${ADMIN_PREFIX}/auth/signin`,
+
+  // Machine-to-machine, called by a Google Apps Script onEdit trigger. It has no
+  // browser, no cookie and therefore nothing to double-submit — CSRF was
+  // rejecting it with 400 before the handler ever ran, which made the webhook
+  // silently dead. Its actual authentication is the constant-time
+  // x-webhook-secret check in the handler, which is the right control for a
+  // caller that carries no ambient credentials.
+  SHEET_WEBHOOK_PATH,
 ]);

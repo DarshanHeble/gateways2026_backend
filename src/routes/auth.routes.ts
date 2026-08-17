@@ -10,11 +10,15 @@
  *   POST   /auth/reset-password       — consume reset link and set password
  *   POST   /auth/verify-email         — OTP verification → issues session
  *   POST   /auth/signin               — password login → issues session
- *   POST   /auth/signout              — revoke session + clear cookies  [auth required]
+ *   POST   /auth/signout              — revoke every session (website + console) + clear cookies  [auth required]
  *   GET    /auth/session              — return current user             [auth required]
  *   GET    /auth/signin/google        — redirect to Google OAuth
  *   GET    /auth/callback/google      — Google OAuth callback → sends OTP
  *   POST   /auth/admin/roles/:userId  — grant role                      [auth + ADMIN]
+ *   POST   /auth/console-handoff      — website → console handoff       [auth required]
+ *   POST   /auth/console-handoff/exchange — exchange console handoff (bearer)
+ *   POST   /auth/website-handoff      — console → website handoff       [auth required]
+ *   POST   /auth/website-handoff/exchange — exchange website handoff (cookie)
  *
  * IDOR invariant: userId is ALWAYS derived from request.user (session-validated),
  * never from request body or query params.
@@ -32,16 +36,18 @@ import {
   changePassword,
   createConsoleHandoff,
   exchangeConsoleHandoff,
+  createWebsiteHandoff,
+  exchangeWebsiteHandoff,
   requestPasswordReset,
   resetPassword,
   getSession,
   handleGoogleCallback,
   initiateGoogleOAuth,
-  signout,
   resolveRequestedTransport,
   resendVerificationCode,
   signinWithPassword,
   signupWithPassword,
+  signoutEverywhere,
   verifyEmail,
 } from '../services/auth.service.js';
 import { assertAuthenticated } from '../plugins/jwt-auth.js';
@@ -245,10 +251,11 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
     {
       schema: {
         tags: ['Authentication'],
-        summary: 'Sign out and revoke session',
+        summary: 'Sign out and revoke every session',
         description:
-          'Revokes the current server-side session and clears all auth cookies. ' +
-          'Requires a valid __session cookie. Idempotent — safe to call even if already signed out.',
+          'Revokes every server-side session for this user (website cookie session AND any ' +
+          'registration-console bearer session) and clears the website auth cookies. Requires a ' +
+          'valid __session cookie. Idempotent — safe to call even if already signed out.',
         response: {
           200: SignoutResponseSchema,
           401: ErrorResponseSchema,
@@ -256,8 +263,8 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       },
     },
     async (request, reply) => {
-      await signout(request, reply);
-      return reply.send({ message: 'Signed out successfully.' });
+      await signoutEverywhere(request, reply);
+      return reply.send({ message: 'Signed out everywhere.' });
     },
   );
 
@@ -361,6 +368,52 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       },
     },
     async (request, reply) => reply.send(await exchangeConsoleHandoff(request.body.code, reply, config)),
+  );
+
+  // The reverse of console-handoff: a signed-in console user (bearer session)
+  // hands their session back to the website (cookie session). Requires only
+  // authentication, not staff role — any account that reached the console can
+  // return to the participant site.
+  router.post(
+    '/website-handoff',
+    {
+      schema: {
+        tags: ['Authentication'],
+        summary: 'Create a one-time handoff from the console back to the website',
+        body: ConsoleHandoffBodySchema,
+        response: {
+          200: z.object({ url: z.string().url(), expiresAt: z.string() }),
+          401: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request) => createWebsiteHandoff(request, config, request.body.returnTo ?? '/'),
+  );
+
+  router.post(
+    '/website-handoff/exchange',
+    {
+      schema: {
+        tags: ['Authentication'],
+        summary: 'Exchange a one-time website handoff for a cookie session',
+        body: ConsoleExchangeBodySchema,
+        response: {
+          200: z.object({
+            expiresAt: z.string(),
+            returnTo: z.string(),
+            user: z.object({
+              id: z.string(),
+              email: z.string(),
+              status: z.string(),
+              mustChangePassword: z.boolean(),
+            }),
+          }),
+          400: ErrorResponseSchema,
+          401: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => reply.send(await exchangeWebsiteHandoff(request.body.code, reply, config)),
   );
 
   // ── GET /auth/signin/google ────────────────────────────────────────────────

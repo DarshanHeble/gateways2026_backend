@@ -49,6 +49,13 @@ export const paymentReceipts = mysqlTable(
 // ─── Audit Log ─────────────────────────────────────────────────────────────────
 // Generic actor/action/target audit trail. No FK on actor_user_id — matches the
 // existing migration (audit rows must survive even if the actor is later purged).
+//
+// event_id is the ORGANIZER visibility key, populated at write time by the call
+// sites that already know the event. It is deliberately NOT derived on read:
+// inferring an event from target_type would mean a correlated join per row type
+// (and is ambiguous for payment_receipt, which is one-to-many via registrations).
+// NULL means "not event-scoped" — logins, role grants, profile edits — and those
+// rows are ADMIN-only. No FK, for the same reason as actor_user_id.
 export const auditLog = mysqlTable(
   'audit_log',
   {
@@ -57,6 +64,7 @@ export const auditLog = mysqlTable(
     action: varchar('action', { length: 128 }).notNull(),
     targetType: varchar('target_type', { length: 64 }).notNull(),
     targetId: varchar('target_id', { length: 128 }).notNull(),
+    eventId: varchar('event_id', { length: 36 }),
     correlationId: varchar('correlation_id', { length: 128 }),
     metadata: text('metadata'),
     createdAt: timestamp('created_at', { fsp: 3 })
@@ -66,6 +74,8 @@ export const auditLog = mysqlTable(
   (table) => ({
     actorIdx: index('audit_actor_idx').on(table.actorUserId, table.createdAt),
     actionIdx: index('audit_action_idx').on(table.action, table.createdAt),
+    // (event_id, id) not (event_id, created_at): reads page on the uuidv7 PK.
+    eventIdx: index('audit_event_idx').on(table.eventId, table.id),
   }),
 );
 
