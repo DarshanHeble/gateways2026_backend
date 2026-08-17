@@ -18,6 +18,15 @@ export async function buildApp() {
     logger: {
       level: config.NODE_ENV === 'production' ? 'info' : 'debug',
       redact: ['headers.authorization', 'headers.cookie', 'body.password'],
+      ...(config.NODE_ENV !== 'production' && {
+        transport: {
+          target: 'pino-pretty',
+          options: {
+            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname',
+          },
+        },
+      }),
     },
   });
 

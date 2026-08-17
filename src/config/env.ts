@@ -130,6 +130,7 @@ const envSchema = z.object({
   OAUTH_GOOGLE_CLIENT_ID: z.string().optional(),
   OAUTH_GOOGLE_CLIENT_SECRET: z.string().optional(),
   OAUTH_CALLBACK_BASE_URL: z.string().url().optional(),
+  APP_OAUTH_CALLBACK_BASE_URL: z.string().url().optional(),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
