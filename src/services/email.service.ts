@@ -114,6 +114,20 @@ class EmailService {
           auth: user ? { user, pass } : undefined,
           // Avoid unusable IPv6 routes while retaining the hostname for SNI.
           getSocket: getIpv4Socket,
+
+          // Fail fast instead of hanging. Nodemailer defaults to the OS TCP
+          // timeout — minutes — and many PaaS hosts (Render included) block
+          // outbound SMTP on 25/465/587, so the connection goes nowhere. With
+          // signup awaiting delivery inline, that turned a blocked port into an
+          // HTTP request that never returned: the client eventually gave up
+          // while the account had already been written.
+          //
+          // 10s is far above a healthy handshake (well under 1s) and far below
+          // any proxy's request timeout, so a dead port surfaces as a prompt,
+          // legible failure and the fallback transporter still gets its turn.
+          connectionTimeout: 10_000,
+          greetingTimeout: 10_000,
+          socketTimeout: 20_000,
         };
       }
       return null;

@@ -233,7 +233,23 @@ export async function signupWithPassword(
     fullName: dto.fullName,
   });
 
-  await sendVerificationCode(email, config);
+  // The account row is already committed above, so a delivery failure must not
+  // fail the whole request: throwing here returned a 500 while leaving a real
+  // account behind, and the next attempt with the same address then hit
+  // EMAIL_TAKEN — the user saw an error twice and could never get in.
+  //
+  // Reporting it honestly instead, and pointing at POST /auth/resend-verification,
+  // which exists for exactly this case. Never claim a code was sent when it was not.
+  try {
+    await sendVerificationCode(email, config);
+  } catch (err) {
+    console.error(`❌ Signup committed for ${email} but the verification email failed to send:`, err);
+    return {
+      message:
+        'Account created, but the verification code could not be sent right now. ' +
+        'Please use "resend code" to receive it.',
+    };
+  }
 
   return {
     message:
