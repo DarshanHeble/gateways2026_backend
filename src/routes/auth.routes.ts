@@ -57,6 +57,7 @@ import { getAppDb, getWriterDb } from '../db/index.js';
 import { users } from '../db/schema/auth.js';
 import { events } from '../db/schema/events.js';
 import { userRoles } from '../db/schema/identity.js';
+import { createHandoffCode } from '../repositories/console-handoffs.repository.js';
 import { createDataError } from '../errors/DataError.js';
 import type { AppConfig } from '../config/env.js';
 import {
@@ -434,6 +435,9 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
     },
     async (request, reply) => {
       const result = initiateGoogleOAuth(config, reply, request.query.returnTo);
+      if (request.query.redirect) {
+        return reply.redirect(result.url, 303);
+      }
       return reply.send(result);
     },
   );
@@ -474,6 +478,17 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       // back in the app instead of seeing the raw JSON response. `result` is
       // retained for the service contract and non-browser callers can still use
       // the handler directly in tests.
+      // If the return path is a native app deep link, generate a handoff token
+      if (result.returnTo.startsWith('exp://') || result.returnTo.startsWith('gateways2026application://')) {
+        const code = await createHandoffCode(getAppDb(), {
+          userId: result.user.id,
+          returnTo: result.returnTo,
+          target: 'website',
+        });
+        const redirectUrl = `${result.returnTo}?handoffCode=${encodeURIComponent(code)}&google=verify&email=${encodeURIComponent(result.user.email)}`;
+        return reply.redirect(redirectUrl, 303);
+      }
+
       const target = result.requiresVerification
         ? `/login?google=verify&email=${encodeURIComponent(result.user.email)}&next=${encodeURIComponent(result.returnTo)}`
         : result.returnTo;

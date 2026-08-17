@@ -3,25 +3,19 @@ import { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { loadConfig } from '../config/env.js';
 import {
   ErrorResponseSchema,
+  GetScheduleResponseSchema,
   ListEventsResponseSchema,
   WebhookAckSchema,
 } from '../schemas/events.schemas.js';
-import { invalidateSheetCache } from '../services/sheets.service.js';
-import { getAppDb } from '../db/index.js';
-import { listEvents } from '../repositories/events.repository.js';
+import { fetchEventsFromSheet, fetchScheduleFromSheet, invalidateSheetCache } from '../services/sheets.service.js';
 
 /**
- * Events routes plugin.
+ * Events & Schedule routes plugin.
  * Registers:
- *   GET  /api/events                   — Public legacy alias for database events.
+ *   GET  /api/events                   — Public. Returns detailed list of fest events & coordinators.
+ *   GET  /api/schedule                 — Public. Returns auto-sorted master schedule by day.
  *   POST /api/webhook/sheet-update     — Protected by x-webhook-secret header.
  *                                        Signals the backend that Sheets data changed.
- *
- * Register in app.ts with: app.register(eventsRoutes, { prefix: '/api' })
- *
- * NOTE: Response schemas intentionally omitted for now while diagnosing a serializer
- * compatibility issue between fastify-type-provider-zod v7 and Zod v4. Routes use
- * raw JSON.stringify for responses until the root cause is resolved.
  */
 export async function eventsRoutes(app: FastifyInstance) {
   const typedApp = app.withTypeProvider<ZodTypeProvider>();
@@ -29,15 +23,14 @@ export async function eventsRoutes(app: FastifyInstance) {
 
   // ---------------------------------------------------------------------------
   // GET /api/events
-  // Public legacy alias. MySQL remains the canonical catalogue so this route
-  // cannot drift away from the registration and console event IDs.
+  // Public endpoint. Fetches all event rows directly from Google Sheets.
   // ---------------------------------------------------------------------------
   typedApp.get(
     '/events',
     {
       schema: {
         description:
-          'Returns the canonical database-backed fest event catalogue.',
+          'Returns the full list of fest events fetched live from Google Sheets with attached coordinators and prize details.',
         tags: ['Events'],
         summary: 'List all fest events',
         response: {
@@ -47,9 +40,34 @@ export async function eventsRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      const rows = await listEvents(getAppDb());
-      request.log.info({ count: rows.length }, 'Fetched events from the canonical database');
-      return reply.send(rows.map(({ event, categorySlug }) => ({ ...event, categorySlug })));
+      const events = await fetchEventsFromSheet();
+      request.log.info({ count: events.length }, 'Fetched events from Google Sheets');
+      return reply.send(events);
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // GET /api/schedule
+  // Public endpoint. Returns auto-sorted master schedule grouped by day.
+  // ---------------------------------------------------------------------------
+  typedApp.get(
+    '/schedule',
+    {
+      schema: {
+        description:
+          'Returns the auto-sorted master timeline schedule grouped by day (combining competition events and general schedule items).',
+        tags: ['Schedule'],
+        summary: 'Get master schedule timeline',
+        response: {
+          200: GetScheduleResponseSchema,
+          503: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const schedule = await fetchScheduleFromSheet();
+      request.log.info({ days: schedule.days.length }, 'Fetched master schedule from Google Sheets');
+      return reply.send(schedule);
     }
   );
 

@@ -43,9 +43,9 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
    * cross-origin calls rejected) points nowhere near a stray character in an
    * env var.
    */
-  const normalizeOrigin = (value: string): string | null => {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
+  const normalizeOrigin = (origin: string): string | null => {
+    const trimmed = origin.trim();
+    if (trimmed === '*') return '*'; // Allow wildcard explicitly
     try {
       return new URL(trimmed).origin;
     } catch {
@@ -83,6 +83,7 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
       // No Origin header: same-origin, curl, native mobile, or app.inject().
       // Not a browser request, therefore not a CSRF vector.
       if (!origin) return cb(null, true);
+      if (allowedOrigins.has('*')) return cb(null, true);
       if (allowedOrigins.has(origin)) return cb(null, true);
       if (config.NODE_ENV === 'development' && LOCALHOST_RE.test(origin)) return cb(null, true);
       if (config.NODE_ENV !== 'production' && previewOriginRe?.test(origin)) return cb(null, true);

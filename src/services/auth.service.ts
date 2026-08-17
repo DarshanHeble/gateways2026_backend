@@ -79,8 +79,9 @@ const PASSWORD_RESET_GENERIC_MESSAGE =
  * production breakage waiting to happen: a drift between them fails at Google,
  * not in CI.
  */
-function buildGoogleCallbackUrl(config: AppConfig): string {
-  const callbackBase = config.OAUTH_CALLBACK_BASE_URL ?? config.FRONTEND_BASE_URL;
+function buildGoogleCallbackUrl(config: AppConfig, returnTo?: string): string {
+  const isApp = returnTo && (returnTo.startsWith('exp://') || returnTo.startsWith('gateways2026application://'));
+  const callbackBase = (isApp ? config.APP_OAUTH_CALLBACK_BASE_URL : config.OAUTH_CALLBACK_BASE_URL) ?? config.FRONTEND_BASE_URL;
   return `${callbackBase.replace(/\/$/, '')}${GOOGLE_CALLBACK_PATH}`;
 }
 
@@ -751,7 +752,7 @@ export function initiateGoogleOAuth(
     throw createDataError('INTERNAL_ERROR', 'Google OAuth is not configured on this server.');
   }
 
-  const callbackUrl = buildGoogleCallbackUrl(config);
+  const callbackUrl = buildGoogleCallbackUrl(config, returnTo);
   const state = crypto.randomBytes(16).toString('hex'); // CSRF state param
 
   // Persist the state so the callback can prove this flow started here. It was
@@ -862,7 +863,7 @@ export async function handleGoogleCallback(
     throw createDataError('VALIDATION_FAILED', 'Invalid or expired OAuth state.');
   }
 
-  const callbackUrl = buildGoogleCallbackUrl(config);
+  const callbackUrl = buildGoogleCallbackUrl(config, returnTo);
 
   // Step 1: exchange code for tokens
   const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
