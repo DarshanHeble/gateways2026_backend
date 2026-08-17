@@ -225,6 +225,9 @@ export async function registerAdminCoreRoutes(app: FastifyInstance, config: AppC
     const { ids } = await resolveScope(request, request.query.eventId);
     const rows = await scopedRegistrations(ids);
     const participantIds = new Set(rows.map((row) => row.registration.userId));
+    const totalParticipants = ids === null
+      ? (await listProfiles(getAppDb())).length
+      : participantIds.size;
     const receipts = await getAppDb().select().from(paymentReceipts);
     const relevantReceipts = ids === null
       ? receipts
@@ -238,7 +241,7 @@ export async function registerAdminCoreRoutes(app: FastifyInstance, config: AppC
     // participants only; the pending KPI remains visible separately.
     const filledSeats = rows.filter((row) => row.registration.status === 'confirmed').length;
     return {
-      totalParticipants: participantIds.size,
+      totalParticipants,
       totalRegistrations: rows.length,
       confirmedRegistrations: rows.filter((row) => row.registration.status === 'confirmed').length,
       pendingRegistrations: rows.filter((row) => row.registration.status === 'pending').length,

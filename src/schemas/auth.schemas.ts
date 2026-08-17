@@ -72,7 +72,8 @@ export const GoogleCallbackQuerySchema = z.object({
 });
 
 export const GoogleOAuthInitQuerySchema = z.object({
-  returnTo: z.string().regex(/^\/(?!\/)/).max(200).optional(),
+  returnTo: z.string().regex(/^(?:\/(?!\/)|exp:\/\/|gateways2026application:\/\/)/).max(200).optional(),
+  redirect: z.enum(['true', 'false']).optional().transform(val => val === 'true'),
 });
 
 export const UserIdParamSchema = z.object({

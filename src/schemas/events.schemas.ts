@@ -11,13 +11,59 @@ import { z } from 'zod';
  * z.record(z.string(), z.any()) — uses z.any() (not z.unknown()) because
  * fastify-type-provider-zod v7 cannot serialize z.unknown() to JSON Schema.
  */
-export const SheetEventSchema = z.record(z.string(), z.any());
+export const EventHeadSchema = z.object({
+  name: z.string(),
+  role: z.string(),
+  phone: z.string(),
+  email: z.string(),
+});
 
-/**
- * Response schema for GET /api/events.
- * An array of event objects from the sheet.
- */
-export const ListEventsResponseSchema = z.array(SheetEventSchema);
+export const EventSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  subtitle: z.string().optional(),
+  date: z.string(),
+  from_time: z.string(),
+  end_time: z.string(),
+  venue: z.string(),
+  type: z.string(),
+  image_url: z.string().optional(),
+  description: z.string(),
+  rules: z.array(z.string()),
+  rules_pdf_url: z.string().optional(),
+  eligibility: z.array(z.string()),
+  prizes: z.object({
+    winner: z.string().optional(),
+    runner_up: z.string().optional(),
+    second_runner_up: z.string().optional(),
+  }),
+  event_heads: z.array(EventHeadSchema),
+});
+
+export const ListEventsResponseSchema = z.array(EventSchema);
+
+export const ScheduleItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  subtitle: z.string().optional(),
+  date: z.string(),
+  from_time: z.string(),
+  end_time: z.string(),
+  venue: z.string(),
+  category: z.string(),
+  is_competition: z.boolean(),
+});
+
+export const ScheduleDaySchema = z.object({
+  day_number: z.number().int(),
+  date: z.string(),
+  display_date: z.string(),
+  timeline: z.array(ScheduleItemSchema),
+});
+
+export const GetScheduleResponseSchema = z.object({
+  days: z.array(ScheduleDaySchema),
+});
 
 /**
  * Acknowledgment body returned by POST /api/webhook/sheet-update on success.

@@ -21,7 +21,7 @@ dockerUp.on('close', (code) => {
   console.log('✅ MySQL container started. Launching Fastify app...');
 
   // 2. Start app with tsx watch
-  const appProcess = spawn('npx', ['tsx', 'watch', 'src/app.ts'], {
+  const appProcess = spawn('npx', ['tsx', 'watch', '--dns-result-order=ipv4first', 'src/app.ts'], {
     cwd: projectRoot,
     stdio: 'inherit',
     shell: true,
