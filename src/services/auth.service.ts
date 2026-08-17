@@ -925,7 +925,22 @@ export async function handleGoogleCallback(
   // Step 4: require the same app-owned verification code as password signup.
   // Google has authenticated the identity, but no website session is issued
   // until the user enters the code sent to that address.
-  await sendVerificationCode(googleUser.email.toLowerCase().trim(), config);
+  //
+  // A delivery failure must not fail the callback. The user and the linked
+  // OAuth account are already committed above, and this runs inside a top-level
+  // browser redirect: throwing here (or hanging on an unreachable SMTP host)
+  // surfaces to the visitor as a dead-end 504 from the frontend proxy, with no
+  // way back into the flow. Proceeding still returns requiresVerification, so
+  // the UI shows the code prompt and its resend button — which is the documented
+  // recovery path in resendVerificationCode.
+  try {
+    await sendVerificationCode(googleUser.email.toLowerCase().trim(), config);
+  } catch (err) {
+    console.error(
+      `❌ Google sign-in linked ${googleUser.email} but the verification email failed to send:`,
+      err,
+    );
+  }
 
   return {
     user: { id: userId, email: googleUser.email },

@@ -122,12 +122,16 @@ class EmailService {
           // HTTP request that never returned: the client eventually gave up
           // while the account had already been written.
           //
-          // 10s is far above a healthy handshake (well under 1s) and far below
-          // any proxy's request timeout, so a dead port surfaces as a prompt,
-          // legible failure and the fallback transporter still gets its turn.
-          connectionTimeout: 10_000,
-          greetingTimeout: 10_000,
-          socketTimeout: 20_000,
+          // 4s, not 10s: sendEmail() tries the primary transporter and THEN the
+          // fallback, so the caller's worst case is roughly double this. The
+          // website proxy aborts a GET after 10s (AbortSignal.timeout in
+          // app/api/v1/[...path]/route.ts) and returns BACKEND_UNAVAILABLE, and
+          // the Google OAuth callback is a GET that sends mail — so both
+          // attempts must fit inside that budget or sign-in 504s instead of
+          // merely losing its email. A healthy handshake is well under 1s.
+          connectionTimeout: 4_000,
+          greetingTimeout: 4_000,
+          socketTimeout: 8_000,
         };
       }
       return null;
