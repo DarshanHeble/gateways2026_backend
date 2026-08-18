@@ -42,11 +42,18 @@ export async function registerCoreEventRoutes(app: FastifyInstance) {
   app.get('/', async (request) => {
     const query = request.query as { search?: string; status?: string; mode?: string };
     const rows = await listEvents(getAppDb(), query);
-    return rows.map(serialize);
+    return rows
+      .sort((a, b) => new Date(a.event.startsAt).getTime() - new Date(b.event.startsAt).getTime())
+      .map(serialize);
   });
+
   app.get('/schedule', async () => {
-    const rows = await listSchedule(getAppDb());
-    return rows.map((row) => ({ ...row, startsAt: iso(row.startsAt), endsAt: iso(row.endsAt) }));
+    const slots = await listSchedule(getAppDb());
+    return slots.map((slot) => ({
+      ...slot,
+      startsAt: iso(slot.startsAt),
+      endsAt: iso(slot.endsAt),
+    }));
   });
   app.get('/:id/stats', async (request, reply) => {
     const stats = await getEventStats(getAppDb(), (request.params as { id: string }).id);
@@ -54,8 +61,9 @@ export async function registerCoreEventRoutes(app: FastifyInstance) {
     return stats;
   });
   app.get('/:id', async (request, reply) => {
-    const row = await getEvent(getAppDb(), (request.params as { id: string }).id);
-    if (!row) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Event not found.' } });
-    return serialize(row);
+    const { id } = request.params as { id: string };
+    const event = await getEvent(getAppDb(), id);
+    if (!event) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Event not found.' } });
+    return serialize(event);
   });
 }

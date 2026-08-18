@@ -17,10 +17,12 @@ import {
   bulkReviewReceipts,
   getPaymentForAdmin,
   getReceiptDownloadUrl,
+  getReceiptFile,
   listPaymentsForAdmin,
   reviewReceipt,
 } from '../../services/payment.service.js';
 import { ReviewReceiptBodySchema } from '../../schemas/payment.schemas.js';
+import { auditRequest } from '../../repositories/audit-log.repository.js';
 import { getAppDb } from '../../db/index.js';
 import { listRegistrationsForUsers } from '../../repositories/registrations.repository.js';
 
@@ -157,7 +159,49 @@ export async function registerAdminPaymentRoutes(app: FastifyInstance, config: A
     async (request) => {
       assertAuthenticated(request);
       await assertAdmin(request);
-      return getReceiptDownloadUrl(request.params.id);
+      const result = await getReceiptDownloadUrl(request.params.id);
+      // Audited after the URL is minted, so receipts that 404 or were erased do
+      // not show up as views. Opening a receipt exposes a participant's payment
+      // document, which is why the read itself belongs on the record.
+      await auditRequest(request, {
+        action: 'payment_receipt_viewed',
+        targetType: 'payment_receipt',
+        targetId: request.params.id,
+      });
+      return result;
+    },
+  );
+
+  router.get(
+    '/:id/receipt-file',
+    {
+      schema: {
+        tags: ['Admin · Payments'],
+        summary: 'Stream the receipt file for inline viewing (Admin only)',
+        description:
+          'Returns the receipt bytes with an inline Content-Disposition so the console can ' +
+          'embed it directly. Proxied through this endpoint rather than redirecting to storage: ' +
+          'the storage URL stays server-side and keeps its short expiry.',
+        params: z.object({ id: z.string() }),
+        // No response schema: this route returns raw bytes, and declaring one
+        // makes the type provider expect a JSON body.
+      },
+    },
+    async (request, reply) => {
+      assertAuthenticated(request);
+      await assertAdmin(request);
+      const file = await getReceiptFile(request.params.id);
+      await auditRequest(request, {
+        action: 'payment_receipt_viewed',
+        targetType: 'payment_receipt',
+        targetId: request.params.id,
+      });
+      return reply
+        .header('content-type', file.contentType)
+        // inline, not attachment — this is the whole point of the endpoint.
+        .header('content-disposition', `inline; filename="${file.fileName.replace(/"/g, '')}"`)
+        .header('cache-control', 'private, no-store')
+        .send(file.body);
     },
   );
 

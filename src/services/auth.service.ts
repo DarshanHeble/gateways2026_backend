@@ -79,8 +79,9 @@ const PASSWORD_RESET_GENERIC_MESSAGE =
  * production breakage waiting to happen: a drift between them fails at Google,
  * not in CI.
  */
-function buildGoogleCallbackUrl(config: AppConfig): string {
-  const callbackBase = config.OAUTH_CALLBACK_BASE_URL ?? config.FRONTEND_BASE_URL;
+function buildGoogleCallbackUrl(config: AppConfig, returnTo?: string): string {
+  const isApp = returnTo && (returnTo.startsWith('exp://') || returnTo.startsWith('gateways2026application://'));
+  const callbackBase = (isApp ? config.APP_OAUTH_CALLBACK_BASE_URL : config.OAUTH_CALLBACK_BASE_URL) ?? config.FRONTEND_BASE_URL;
   return `${callbackBase.replace(/\/$/, '')}${GOOGLE_CALLBACK_PATH}`;
 }
 
@@ -233,7 +234,23 @@ export async function signupWithPassword(
     fullName: dto.fullName,
   });
 
-  await sendVerificationCode(email, config);
+  // The account row is already committed above, so a delivery failure must not
+  // fail the whole request: throwing here returned a 500 while leaving a real
+  // account behind, and the next attempt with the same address then hit
+  // EMAIL_TAKEN — the user saw an error twice and could never get in.
+  //
+  // Reporting it honestly instead, and pointing at POST /auth/resend-verification,
+  // which exists for exactly this case. Never claim a code was sent when it was not.
+  try {
+    await sendVerificationCode(email, config);
+  } catch (err) {
+    console.error(`❌ Signup committed for ${email} but the verification email failed to send:`, err);
+    return {
+      message:
+        'Account created, but the verification code could not be sent right now. ' +
+        'Please use "resend code" to receive it.',
+    };
+  }
 
   return {
     message:
@@ -252,7 +269,12 @@ export async function resendVerificationCode(
 ): Promise<{ message: string }> {
   const email = emailInput.toLowerCase().trim();
   const user = await findUserByEmail(getAppDb(), email);
-  if (user) {
+  // "Awaiting verification" is what the response promises, so make it true.
+  // Without the emailVerified check this re-issued a live code against an
+  // address that had already been verified — anyone who knew a registered
+  // address could mail-bomb it, and a returning user got a fresh OTP for an
+  // account that had nothing left to prove.
+  if (user && !user.emailVerified) {
     await sendVerificationCode(email, config);
   }
 
@@ -662,6 +684,61 @@ export async function exchangeConsoleHandoff(
   };
 }
 
+/**
+ * The reverse of `createConsoleHandoff`: a staff member already signed into the
+ * registration console can hand their session back to the website. Reuses the
+ * same one-time-code table with `target: 'website'` rather than a second table.
+ *
+ * This must be a real browser navigation, not a background fetch — the
+ * website's session cookie is issued for the website's own origin, and a
+ * cross-origin request from the console cannot set it (this is also why the
+ * console session is a bearer token in the first place, see `signoutEverywhere`
+ * above). The console UI triggers this explicitly (e.g. an "Open participant
+ * site" action), it is not automatic on every console sign-in.
+ */
+export async function createWebsiteHandoff(
+  request: FastifyRequest,
+  config: AppConfig,
+  returnTo = '/',
+): Promise<{ url: string; expiresAt: string }> {
+  assertAuthenticated(request);
+  const code = await createHandoffCode(getAppDb(), { userId: request.user.id, returnTo, target: 'website' });
+  const expiresAt = new Date(Date.now() + 90_000).toISOString();
+  const url = `${config.FRONTEND_BASE_URL.replace(/\/$/, '')}/auth/console-return?code=${encodeURIComponent(code)}&returnTo=${encodeURIComponent(returnTo)}`;
+  return { url, expiresAt };
+}
+
+export async function exchangeWebsiteHandoff(
+  code: string,
+  reply: FastifyReply,
+  config: AppConfig,
+): Promise<{
+  expiresAt: string;
+  returnTo: string;
+  user: { id: string; email: string; status: string; mustChangePassword: boolean };
+}> {
+  const db = getAppDb();
+  const handoff = await consumeHandoffCode(db, code, 'website');
+  if (!handoff) throw createDataError('INVALID_CREDENTIALS', 'This sign-in link is invalid or expired.');
+
+  const user = await findUserById(db, handoff.userId);
+  if (!user) throw createDataError('NOT_AUTHENTICATED', 'Account no longer exists.');
+
+  const credentials = await issueSessionFor(user.id, reply, config, 'cookie');
+  if (!credentials) throw createDataError('INTERNAL_ERROR', 'Could not create website session.');
+
+  return {
+    expiresAt: credentials.expiresAt,
+    returnTo: handoff.returnTo,
+    user: {
+      id: user.id,
+      email: user.email,
+      status: user.status,
+      mustChangePassword: user.mustChangePassword,
+    },
+  };
+}
+
 // ─── 6. Google OAuth — Initiate ──────────────────────────────────────────────
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -680,7 +757,7 @@ export function initiateGoogleOAuth(
     throw createDataError('INTERNAL_ERROR', 'Google OAuth is not configured on this server.');
   }
 
-  const callbackUrl = buildGoogleCallbackUrl(config);
+  const callbackUrl = buildGoogleCallbackUrl(config, returnTo);
   const state = crypto.randomBytes(16).toString('hex'); // CSRF state param
 
   // Persist the state so the callback can prove this flow started here. It was
@@ -762,7 +839,7 @@ export async function handleGoogleCallback(
   state?: string,
 ): Promise<{
   user: { id: string; email: string };
-  requiresVerification: true;
+  requiresVerification: boolean;
   returnTo: string;
 }> {
   if (!config.OAUTH_GOOGLE_CLIENT_ID || !config.OAUTH_GOOGLE_CLIENT_SECRET) {
@@ -791,7 +868,7 @@ export async function handleGoogleCallback(
     throw createDataError('VALIDATION_FAILED', 'Invalid or expired OAuth state.');
   }
 
-  const callbackUrl = buildGoogleCallbackUrl(config);
+  const callbackUrl = buildGoogleCallbackUrl(config, returnTo);
 
   // Step 1: exchange code for tokens
   const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
@@ -851,10 +928,47 @@ export async function handleGoogleCallback(
     },
   });
 
-  // Step 4: require the same app-owned verification code as password signup.
-  // Google has authenticated the identity, but no website session is issued
-  // until the user enters the code sent to that address.
-  await sendVerificationCode(googleUser.email.toLowerCase().trim(), config);
+  // Step 4: require the app-owned verification code ONLY on the first sign-in.
+  //
+  // Once this address has completed verification, `users.email_verified` holds
+  // a timestamp and there is nothing left to prove — Google itself asserted
+  // `email_verified` at the top of this function, for the same address. Sending
+  // a fresh code on EVERY callback put an OTP wall in front of every returning
+  // Google user, and stood up a live code against an account that no longer
+  // needed one.
+  const account = await findUserById(db, userId);
+  if (account?.emailVerified) {
+    await createSessionAndIssueCredentials(
+      userId,
+      reply,
+      config,
+      resolveRequestedTransport(request),
+    );
+    return {
+      user: { id: userId, email: googleUser.email },
+      requiresVerification: false,
+      returnTo,
+    };
+  }
+
+  // First sign-in for this address. Google has authenticated the identity, but
+  // no website session is issued until the user enters the code sent to it.
+  //
+  // A delivery failure must not fail the callback. The user and the linked
+  // OAuth account are already committed above, and this runs inside a top-level
+  // browser redirect: throwing here (or hanging on an unreachable SMTP host)
+  // surfaces to the visitor as a dead-end 504 from the frontend proxy, with no
+  // way back into the flow. Proceeding still returns requiresVerification, so
+  // the UI shows the code prompt and its resend button — which is the documented
+  // recovery path in resendVerificationCode.
+  try {
+    await sendVerificationCode(googleUser.email.toLowerCase().trim(), config);
+  } catch (err) {
+    console.error(
+      `❌ Google sign-in linked ${googleUser.email} but the verification email failed to send:`,
+      err,
+    );
+  }
 
   return {
     user: { id: userId, email: googleUser.email },

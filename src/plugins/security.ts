@@ -32,11 +32,40 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
   // Bearer-authenticated requests on the grounds that a cross-site caller cannot
   // set an Authorization header without a preflight this allowlist rejects. A
   // permissive origin check would quietly invalidate that reasoning.
+  /**
+   * Normalises a configured entry to exactly what a browser puts in `Origin`:
+   * scheme + host + optional port, never a trailing slash or path.
+   *
+   * This is not cosmetic. `CORS_ORIGIN` is hand-edited, and a value pasted from
+   * a browser address bar arrives as "https://dash.vercel.app/" — with the
+   * slash. A raw string compare against the browser's "https://dash.vercel.app"
+   * then fails for every request from that site, and the symptom (all
+   * cross-origin calls rejected) points nowhere near a stray character in an
+   * env var.
+   */
+  const normalizeOrigin = (origin: string): string | null => {
+    const trimmed = origin.trim();
+    if (trimmed === '*') return '*'; // Allow wildcard explicitly
+    try {
+      return new URL(trimmed).origin;
+    } catch {
+      app.log.warn({ value: trimmed }, 'Ignoring unparseable CORS_ORIGIN entry');
+      return null;
+    }
+  };
+
   const allowedOrigins = new Set(
     config.CORS_ORIGIN.split(',')
-      .map((o) => o.trim())
-      .filter(Boolean),
+      .map(normalizeOrigin)
+      .filter((o): o is string => o !== null),
   );
+
+  // The API's own origin, so the Swagger UI this server hosts at /docs can call
+  // it. Browsers send an Origin header on fetch even when it is same-origin, so
+  // without this "Try it out" fails with a CORS rejection against the very
+  // server serving the page.
+  const ownOrigin = normalizeOrigin(config.APP_BASE_URL);
+  if (ownOrigin) allowedOrigins.add(ownOrigin);
 
   const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/;
 
@@ -54,10 +83,17 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
       // No Origin header: same-origin, curl, native mobile, or app.inject().
       // Not a browser request, therefore not a CSRF vector.
       if (!origin) return cb(null, true);
+      if (allowedOrigins.has('*')) return cb(null, true);
       if (allowedOrigins.has(origin)) return cb(null, true);
       if (config.NODE_ENV === 'development' && LOCALHOST_RE.test(origin)) return cb(null, true);
       if (config.NODE_ENV !== 'production' && previewOriginRe?.test(origin)) return cb(null, true);
-      cb(new Error('Not allowed by CORS'), false);
+
+      // A DataError, not a bare Error. A bare one falls through to the handler's
+      // catch-all and is reported as 500 INTERNAL_ERROR — which says the server
+      // broke when in fact it correctly refused an unlisted origin, and sends
+      // anyone debugging it hunting for a crash that never happened.
+      app.log.warn({ origin }, 'Rejected cross-origin request from unlisted origin');
+      cb(createDataError('FORBIDDEN', `Origin ${origin} is not allowed.`), false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -163,16 +199,23 @@ export async function registerPlugins(app: FastifyInstance, config: AppConfig) {
     // Log unhandled infrastructure / internal errors silently server-side
     app.log.error({ err: error, correlationId }, 'Unhandled server error');
 
-    // Return safe public error response
+    // Return safe public error response.
+    //
+    // The stack is deliberately withheld in production. It was previously sent
+    // unconditionally, so a public 500 disclosed absolute server paths and the
+    // internal module layout (e.g. /opt/render/project/src/dist/plugins/...) to
+    // anyone who could trigger an error. The full stack is still logged above
+    // against the same correlationId, which is where an operator should read it.
+    const isProduction = config.NODE_ENV === 'production' || config.NODE_ENV === 'preproduction';
     const internalErr = createDataError('INTERNAL_ERROR', error?.message || 'An unexpected error occurred.', correlationId);
     reply.status(500).send({
       error: {
         code: internalErr.code,
-        message: internalErr.message,
+        message: isProduction ? 'An unexpected error occurred.' : internalErr.message,
         statusCode: 500,
         retryable: false,
         correlationId,
-        details: error?.stack,
+        ...(isProduction ? {} : { details: error?.stack }),
       },
     });
   });

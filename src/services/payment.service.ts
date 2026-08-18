@@ -39,6 +39,8 @@ export interface SubmitReceiptDto {
   fileSizeBytes: number;
   paymentMethod?: 'upi' | 'neft' | 'gateway';
   transactionReference?: string;
+  /** Declared rate. Verified against the receipt by a human before approval. */
+  amountInr?: number;
 }
 
 export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Promise<PaymentReceipt> {
@@ -97,7 +99,9 @@ export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Prom
           fileUrl: upload.url,
           fileName: dto.fileName,
           fileSizeBytes: decodedBytes,
-          amountInr: loadConfig().ENTRY_PASS_AMOUNT_INR,
+          // The participant's declared tier when they picked one, otherwise
+          // the configured default. Still subject to manual verification.
+          amountInr: dto.amountInr ?? loadConfig().ENTRY_PASS_AMOUNT_INR,
           paymentMethod: dto.paymentMethod ?? 'upi',
           transactionReference,
         });
@@ -293,6 +297,48 @@ export async function getReceiptDownloadUrl(id: string): Promise<{ url: string }
     throw createDataError('NOT_FOUND', 'This receipt file has been erased.');
   }
   return { url: cloudinaryStorage.createSignedDownloadUrl(receipt.cloudinaryPublicId) };
+}
+
+/**
+ * Fetch the receipt bytes for inline display in the console.
+ *
+ * createSignedDownloadUrl points at Cloudinary's `/raw/download` endpoint, which
+ * answers with `Content-Disposition: attachment` — a browser downloads it rather
+ * than rendering it, so a receipt embedded in the review pane shows nothing.
+ * Cloudinary's inline alternative is a signed *delivery* URL, but those do not
+ * expire, and handing out a permanent link to someone's payment document is a
+ * worse problem than the one being solved.
+ *
+ * So the bytes are fetched server-side and streamed back over the console's own
+ * authenticated endpoint: the Cloudinary URL never reaches the browser and keeps
+ * its 5-minute expiry.
+ */
+export async function getReceiptFile(
+  id: string,
+): Promise<{ body: Buffer; contentType: string; fileName: string }> {
+  const receipt = await getReceiptById(getAppDb(), id);
+  if (!receipt) throw createDataError('NOT_FOUND', 'Payment receipt not found.');
+  if (receipt.cloudinaryPublicId.startsWith('erased-')) {
+    throw createDataError('NOT_FOUND', 'This receipt file has been erased.');
+  }
+
+  const response = await fetch(cloudinaryStorage.createSignedDownloadUrl(receipt.cloudinaryPublicId));
+  if (!response.ok) {
+    throw createDataError('STORAGE_UNAVAILABLE', 'Could not retrieve the receipt file.');
+  }
+
+  // Raw uploads come back as octet-stream, so the type is derived from the
+  // stored filename — an <object> needs application/pdf to render inline.
+  const fileName = receipt.fileName ?? 'receipt';
+  const ext = fileName.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  const contentType =
+    ext === 'pdf' ? 'application/pdf'
+      : ext === 'png' ? 'image/png'
+        : ext === 'webp' ? 'image/webp'
+          : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+            : 'application/octet-stream';
+
+  return { body: Buffer.from(await response.arrayBuffer()), contentType, fileName };
 }
 
 /**

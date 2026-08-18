@@ -16,6 +16,12 @@ export const SubmitReceiptBodySchema = z.object({
     .max(5_000_000, 'File must not exceed 5MB.'),
   paymentMethod: z.enum(['upi', 'neft', 'gateway']),
   transactionReference: z.string().trim().min(4).max(128),
+  /**
+   * The rate the participant says they paid. A CLAIM, not an entitlement — the
+   * verifier compares it against the uploaded receipt before approving, and
+   * nothing is unlocked on the strength of this number alone.
+   */
+  amountInr: z.number().int().positive().max(100_000).optional(),
 });
 
 export const ReviewReceiptBodySchema = z

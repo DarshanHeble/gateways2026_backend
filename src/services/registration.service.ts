@@ -282,6 +282,36 @@ export async function joinTeamWithMember(input: { userId: string; joinCode: stri
     const members = await tx.select().from(teamMembers).where(eq(teamMembers.teamId, team.id));
     if (members.some((member) => member.userId === input.userId)) return { team, registration: null };
     if (members.length >= (event.maxTeamSize ?? 1)) throw createDataError('TEAM_FULL');
+
+    /*
+      A team must come from one college AND one department.
+
+      Compared against the LEADER rather than against every member: the leader
+      created the team, so their pairing is the team's pairing, and checking one
+      row keeps this a single lookup inside an already-locked transaction.
+      `assertCompleteProfile` above guarantees both sides have a profile row.
+    */
+    const [joiner] = await tx
+      .select({ collegeId: profiles.collegeId, departmentId: profiles.departmentId })
+      .from(profiles)
+      .where(eq(profiles.userId, input.userId))
+      .limit(1);
+    const [leader] = await tx
+      .select({ collegeId: profiles.collegeId, departmentId: profiles.departmentId })
+      .from(profiles)
+      .where(eq(profiles.userId, team.leaderUserId))
+      .limit(1);
+    if (
+      !joiner?.collegeId ||
+      !joiner.departmentId ||
+      joiner.collegeId !== leader?.collegeId ||
+      joiner.departmentId !== leader?.departmentId
+    ) {
+      throw createDataError(
+        'VALIDATION_FAILED',
+        'You can only join a team from your own college and department.',
+      );
+    }
     await tx.insert(teamMembers).values({ teamId: team.id, userId: input.userId, role: 'member' });
     const registration = await registerInTransaction(tx, { participantId: input.userId, eventId: team.eventId, teamId: team.id, source: 'online' });
     return { team, registration };

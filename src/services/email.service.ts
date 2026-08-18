@@ -114,6 +114,24 @@ class EmailService {
           auth: user ? { user, pass } : undefined,
           // Avoid unusable IPv6 routes while retaining the hostname for SNI.
           getSocket: getIpv4Socket,
+
+          // Fail fast instead of hanging. Nodemailer defaults to the OS TCP
+          // timeout — minutes — and many PaaS hosts (Render included) block
+          // outbound SMTP on 25/465/587, so the connection goes nowhere. With
+          // signup awaiting delivery inline, that turned a blocked port into an
+          // HTTP request that never returned: the client eventually gave up
+          // while the account had already been written.
+          //
+          // 4s, not 10s: sendEmail() tries the primary transporter and THEN the
+          // fallback, so the caller's worst case is roughly double this. The
+          // website proxy aborts a GET after 10s (AbortSignal.timeout in
+          // app/api/v1/[...path]/route.ts) and returns BACKEND_UNAVAILABLE, and
+          // the Google OAuth callback is a GET that sends mail — so both
+          // attempts must fit inside that budget or sign-in 504s instead of
+          // merely losing its email. A healthy handshake is well under 1s.
+          connectionTimeout: 4_000,
+          greetingTimeout: 4_000,
+          socketTimeout: 8_000,
         };
       }
       return null;

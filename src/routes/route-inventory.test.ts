@@ -41,6 +41,8 @@ const EXPECTED_PATHS = [
   '/api/v1/auth/resend-verification',
   '/api/v1/auth/reset-password',
   '/api/v1/auth/verify-email',
+  '/api/v1/auth/website-handoff',
+  '/api/v1/auth/website-handoff/exchange',
   '/api/v1/payment-receipts/',
   '/api/v1/payment-receipts/config',
   '/api/v1/payment-receipts/me',
@@ -74,6 +76,7 @@ const EXPECTED_PATHS = [
   '/api/v1/admin/payments/',
   '/api/v1/admin/payments/bulk-review',
   '/api/v1/admin/payments/{id}',
+  '/api/v1/admin/payments/{id}/receipt-file',
   '/api/v1/admin/payments/{id}/receipt-url',
   '/api/v1/admin/payments/{id}/review',
   '/api/v1/admin/overview',
@@ -91,6 +94,7 @@ const EXPECTED_PATHS = [
   '/api/v1/admin/staff',
   '/api/v1/admin/staff/{id}/assignments',
   '/api/v1/admin/staff/{id}/assignments/{assignmentId}',
+  '/api/v1/admin/audit',
 
   // Existing non-versioned integration surface.
   '/api/events',
