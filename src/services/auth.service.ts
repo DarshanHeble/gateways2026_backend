@@ -269,7 +269,12 @@ export async function resendVerificationCode(
 ): Promise<{ message: string }> {
   const email = emailInput.toLowerCase().trim();
   const user = await findUserByEmail(getAppDb(), email);
-  if (user) {
+  // "Awaiting verification" is what the response promises, so make it true.
+  // Without the emailVerified check this re-issued a live code against an
+  // address that had already been verified — anyone who knew a registered
+  // address could mail-bomb it, and a returning user got a fresh OTP for an
+  // account that had nothing left to prove.
+  if (user && !user.emailVerified) {
     await sendVerificationCode(email, config);
   }
 
@@ -834,7 +839,7 @@ export async function handleGoogleCallback(
   state?: string,
 ): Promise<{
   user: { id: string; email: string };
-  requiresVerification: true;
+  requiresVerification: boolean;
   returnTo: string;
 }> {
   if (!config.OAUTH_GOOGLE_CLIENT_ID || !config.OAUTH_GOOGLE_CLIENT_SECRET) {
@@ -923,9 +928,31 @@ export async function handleGoogleCallback(
     },
   });
 
-  // Step 4: require the same app-owned verification code as password signup.
-  // Google has authenticated the identity, but no website session is issued
-  // until the user enters the code sent to that address.
+  // Step 4: require the app-owned verification code ONLY on the first sign-in.
+  //
+  // Once this address has completed verification, `users.email_verified` holds
+  // a timestamp and there is nothing left to prove — Google itself asserted
+  // `email_verified` at the top of this function, for the same address. Sending
+  // a fresh code on EVERY callback put an OTP wall in front of every returning
+  // Google user, and stood up a live code against an account that no longer
+  // needed one.
+  const account = await findUserById(db, userId);
+  if (account?.emailVerified) {
+    await createSessionAndIssueCredentials(
+      userId,
+      reply,
+      config,
+      resolveRequestedTransport(request),
+    );
+    return {
+      user: { id: userId, email: googleUser.email },
+      requiresVerification: false,
+      returnTo,
+    };
+  }
+
+  // First sign-in for this address. Google has authenticated the identity, but
+  // no website session is issued until the user enters the code sent to it.
   //
   // A delivery failure must not fail the callback. The user and the linked
   // OAuth account are already committed above, and this runs inside a top-level

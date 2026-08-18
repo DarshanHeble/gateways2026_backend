@@ -485,7 +485,13 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
           returnTo: result.returnTo,
           target: 'website',
         });
-        const redirectUrl = `${result.returnTo}?handoffCode=${encodeURIComponent(code)}&google=verify&email=${encodeURIComponent(result.user.email)}`;
+        // `google=verify` only when a code is actually outstanding. Appending it
+        // unconditionally showed the native app an OTP prompt on every sign-in,
+        // the same repeat-verification bug the service side just fixed.
+        const verifyQuery = result.requiresVerification
+          ? `&google=verify&email=${encodeURIComponent(result.user.email)}`
+          : '';
+        const redirectUrl = `${result.returnTo}?handoffCode=${encodeURIComponent(code)}${verifyQuery}`;
         return reply.redirect(redirectUrl, 303);
       }
 

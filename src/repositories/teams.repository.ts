@@ -2,6 +2,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../db/schema/index.js';
 import { teams, teamMembers } from '../db/schema/teams.js';
+import { profiles } from '../db/schema/identity.js';
 
 type Db = MySql2Database<typeof schema>;
 
@@ -21,6 +22,24 @@ export async function getTeamByJoinCode(db: Db, joinCode: string) {
   return rows[0] ?? null;
 }
 
+/**
+ * Roster with display names.
+ *
+ * The bare membership rows carry only a userId, which left the UI printing
+ * "Teammate" beside every row. `profiles` is LEFT joined, not inner: a member
+ * whose profile row is somehow missing must still appear in their own team
+ * rather than silently vanishing from the roster.
+ */
 export async function listTeamMembers(db: Db, teamId: string) {
-  return db.select().from(teamMembers).where(eq(teamMembers.teamId, teamId));
+  return db
+    .select({
+      teamId: teamMembers.teamId,
+      userId: teamMembers.userId,
+      role: teamMembers.role,
+      joinedAt: teamMembers.joinedAt,
+      fullName: profiles.fullName,
+    })
+    .from(teamMembers)
+    .leftJoin(profiles, eq(profiles.userId, teamMembers.userId))
+    .where(eq(teamMembers.teamId, teamId));
 }

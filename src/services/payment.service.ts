@@ -39,6 +39,8 @@ export interface SubmitReceiptDto {
   fileSizeBytes: number;
   paymentMethod?: 'upi' | 'neft' | 'gateway';
   transactionReference?: string;
+  /** Declared rate. Verified against the receipt by a human before approval. */
+  amountInr?: number;
 }
 
 export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Promise<PaymentReceipt> {
@@ -97,7 +99,9 @@ export async function submitReceipt(userId: string, dto: SubmitReceiptDto): Prom
           fileUrl: upload.url,
           fileName: dto.fileName,
           fileSizeBytes: decodedBytes,
-          amountInr: loadConfig().ENTRY_PASS_AMOUNT_INR,
+          // The participant's declared tier when they picked one, otherwise
+          // the configured default. Still subject to manual verification.
+          amountInr: dto.amountInr ?? loadConfig().ENTRY_PASS_AMOUNT_INR,
           paymentMethod: dto.paymentMethod ?? 'upi',
           transactionReference,
         });
