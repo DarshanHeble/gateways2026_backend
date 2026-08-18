@@ -95,6 +95,18 @@ const envSchema = z.object({
 
   // Fallback SMTP config
   SMTP_FALLBACK_URL: z.string().optional(),
+  /*
+    HTTP mail relay, for hosts that block outbound SMTP.
+
+    Render (and most PaaS) block ports 25/465/587 outright, so nodemailer can
+    never deliver from there no matter how it is configured. An HTTPS POST on
+    443 always gets out, which is why production uses this and SMTP is kept for
+    local development.
+
+    Both optional: absent means fall back to SMTP exactly as before.
+  */
+  PHP_MAILER_URL: z.string().url().optional(),
+  PHP_MAILER_API_KEY: z.string().optional(),
   SMTP_FALLBACK_HOST: z.string().optional(),
   SMTP_FALLBACK_PORT: z.coerce.number().optional(),
   SMTP_FALLBACK_USER: z.string().optional(),

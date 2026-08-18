@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../db/schema/index.js';
 import { characters } from '../db/schema/characters.js';
+import { createDataError } from '../errors/DataError.js';
 
 type Db = MySql2Database<typeof schema>;
 
@@ -77,7 +78,26 @@ export async function createCharacter(
   return getCharacter(db, userId);
 }
 
+/**
+ * Patch a character.
+ *
+ * `playerName` is the public username, and it must stay unique — `createUser`
+ * has always enforced that on the way in, but this path did not, so a rename
+ * could quietly collide with an existing name and produce two identical
+ * usernames. The check runs inside the transaction that performs the write.
+ *
+ * NOTE: check-then-write still leaves a narrow race between two simultaneous
+ * renames. The durable fix is a UNIQUE index on a lower-cased `player_name`;
+ * until that migration exists this closes the realistic case, not every case.
+ */
 export async function updateCharacter(db: Db, userId: string, patch: Partial<typeof characters.$inferInsert>) {
+  if (patch.playerName !== undefined) {
+    const name = String(patch.playerName).trim();
+    if (await isPlayerNameTaken(db, name, userId)) {
+      throw createDataError('PLAYER_NAME_TAKEN', 'That username is already taken.');
+    }
+    patch = { ...patch, playerName: name };
+  }
   const allowed = {
     ...(patch.playerName === undefined ? {} : { playerName: patch.playerName }),
     ...(patch.collegeId === undefined ? {} : { collegeId: patch.collegeId }),
